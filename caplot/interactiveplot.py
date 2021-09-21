@@ -121,7 +121,7 @@ class InteractivePlot(abc.ABC):
         self._hovers = hovers
 
     def AddHover(self, hovers):
-        ### take a dict of {lable:colName}
+        self._hovers.update(hovers)
         pass
 
     def DropHover(self, hovers):

@@ -18,9 +18,7 @@ class Manhattan(InteractivePlot):
         necessary glyphs. To do so, the settings stored via `.Configure()` must be taken into account.
         """
 
-        ### Add 3 fields to the hovers:
-        xyHovers = {'contig':contig, 'pos':position,  'pval':pvalue}
-        self._hovers.update(xyHovers)
-
-
+        ### Add X-Y fields to the hovers:
+        self.AddHover({'contig':contig, 'pos':position,  'pval':pvalue})
+        
         pass
