@@ -4,6 +4,7 @@ import urllib.parse
 
 import ipywidgets as widgets
 import pandas as pd
+from stringcase import titlecase
 from IPython.display import display
 from bokeh.io.export import get_screenshot_as_png
 from bokeh.plotting import output_file, show
@@ -18,7 +19,7 @@ class InteractivePlot(abc.ABC):
         self._filtered = None
         self._highlighted = None
         self._widgets = None
-        self._config = None
+        self._config = {}
         self._hovers = {}
 
         if source is not None:
@@ -233,5 +234,5 @@ class InteractivePlot(abc.ABC):
         self._widgets = self.Widgets()
         specified_config = {name: widget for name, widget in self._widgets.items()}
         out = widgets.interactive_output(self.SetupAndShow, specified_config)
-        ui = widgets.VBox([widgets.HBox([widgets.Label(name), widget]) for name, widget in self._widgets.items()])
+        ui = widgets.VBox([widgets.HBox([widgets.Label(titlecase(name)), widget]) for name, widget in self._widgets.items()])
         display(ui, out)

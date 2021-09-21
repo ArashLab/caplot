@@ -16,7 +16,7 @@ from .interactiveplot import InteractivePlot
 
 class PCA(InteractivePlot):
 
-    def Configure(self, plots=None, coloringColumn=None, coloringPalette='Magma256', coloringStyle='Continuous', nCols=3):
+    def Configure(self, plots=None, coloringColumn=None, coloringPalette='Magma256', coloringStyle='Continuous', numCols=3):
         """Configures the PCA plot.
 
         Parameters
@@ -29,38 +29,39 @@ class PCA(InteractivePlot):
             The name of the palette, recognized by Bokeh.
         coloringStyle: Literal['Categorical', 'Continuous']
             Either `Categorical` or `Continuous` as a string.
-        nCols: int
+        numCols: int
             Number of charts in a single row.
         """
+        # Not a good approach regarding plots, but the alternative requires a better widget for the field.
         self._config = {
-            'plots': plots,
+            'plots': eval(plots) if isinstance(plots, str) else plots,
             'coloringColumn': coloringColumn,
             'coloringPalette': coloringPalette,
             'coloringStyle': coloringStyle,
-            'nCols': nCols,
+            'numCols': numCols,
         }
 
     def Widgets(self):
         return {
             **super(PCA, self).Widgets(),
-            'plots': widgets.Text(value='[]'),
-            'coloringColumn': widgets.Text(value='columnName'),
-            'coloringPalette': widgets.Select(options=[
+            'plots': widgets.Text(value=str(self._config.get('plots', []))),
+            'coloringColumn': widgets.Text(value=self._config.get('coloringColumn')),
+            'coloringPalette': widgets.Dropdown(options=[
                 'Greys256', 'Inferno256', 'Magma256', 'Plasma256', 'Viridis256', 'Cividis256', 'Turbo256',  # Continuous
                 'Category10', 'Category20', 'Category20b', 'Category20c', 'Accent', 'GnBu', 'PRGn', 'Paired',  # Categorical
-            ], value='Turbo256'),
-            'coloringStyle': widgets.Select(options=['Categorical', 'Continuous'], value='Continuous'),
-            'nCols': widgets.IntSlider(value=3, min=1),
+            ], value=self._config.get('coloringPalette', 'Turbo256')),
+            'coloringStyle': widgets.Dropdown(options=['Categorical', 'Continuous'], value=self._config.get('coloringStyle', 'Continuous')),
+            'numCols': widgets.IntSlider(value=3, min=1, max=8),
         }
 
     def _Plots(self):
         plots = self._config['plots']
-        nCols = self._config['nCols']
+        numCols = self._config['numCols']
         if all(isinstance(element, str) for element in plots):  # List of strings.
             plots = [(first, second) for first in plots for second in plots if first != second]
         # Otherwise, we assume `plots` is already a list of tuples, containing a pair of strings.
-        # We now group them up in batches of `nCols`.
-        plots = [plots[start:start+nCols] for start in range(0, len(plots), nCols)]
+        # We now group them up in batches of `numCols`.
+        plots = [plots[start:start+numCols] for start in range(0, len(plots), numCols)]
         return plots
 
     def _Draw(self, x, y):
@@ -71,7 +72,7 @@ class PCA(InteractivePlot):
             alpha = '_opacity_'
         else:
             alpha = 1
-        if self._config['coloringColumn'] is not None:
+        if self._config['coloringColumn']:
             targetColumn = data[self._config['coloringColumn']]
             if self._config['coloringStyle'] == 'Categorical':
                 palette = getattr(palettes, self._config['coloringPalette'])
