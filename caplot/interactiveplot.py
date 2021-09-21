@@ -18,14 +18,17 @@ class InteractivePlot(abc.ABC):
         self._filtered = None
         self._highlighted = None
         self._widgets = None
-        self._hovers = None
         self._config = None
+        self._hovers = {}
 
-        if source:
+        if source is not None:
             self.LoadData(source, loadQuery)
-            self.Filter(filterQuery, keep)
-            self.Highlight(highlightQuery, highlight)
-            self.Hover(hovers)
+            if filterQuery is not None:
+                self.Filter(filterQuery, keep)
+            if highlightQuery is not None:
+                self.Highlight(highlightQuery, highlight)
+            if hovers is not None:
+                self.Hover(hovers)
 
     def LoadData(self, source, sqlQuery=None):
         """Imports data as a Pandas DataFrame.
@@ -111,7 +114,7 @@ class InteractivePlot(abc.ABC):
         self._highlighted = rows.index if highlight else self._data.drop(rows.index).index
 
     def Hover(self, hovers):
-        """Sets the internal `_hovers` dictionary. Different charts utilize it differently.
+        """Sets the internal `_hovers` dictionary.
 
         Parameters
         ----------
@@ -121,12 +124,25 @@ class InteractivePlot(abc.ABC):
         self._hovers = hovers
 
     def AddHover(self, hovers):
-        self._hovers.update(hovers)
+        """Adds the specified keys and values to the hover set.
+
+        Parameters
+        ----------
+        hovers: dict
+            Keys and values that must be added.
+        """
+        self._hovers = {**self._hovers, **hovers}
 
     def DropHover(self, hoverLabels):
-        for key in hoverLabels:
-            del self._hovers[key] ### Check if key exist in the hovers
+        """Drops the specified keys in the list from the hover set.
 
+        Parameters
+        ----------
+        hoverLabels: list
+            Keys that must be dropped.
+        """
+        for key in hoverLabels:
+            self._hovers.pop(key)
 
     @abc.abstractmethod
     def Configure(self, **kwargs):
@@ -136,8 +152,7 @@ class InteractivePlot(abc.ABC):
         """
         pass
 
-    @staticmethod
-    def Widgets():
+    def Widgets(self):
         """
         The method must be overridden to implement the functionality related to storing the settings. The parent method
         implements a couple of widgets, namely, the filtering query and the highlighting query.

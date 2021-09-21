@@ -1,11 +1,92 @@
+from typing import Union, List, Tuple, AnyStr, Literal, Iterable
+
+from bokeh.plotting import figure
+from bokeh.layouts import gridplot
+from bokeh.models import (
+    CategoricalColorMapper,
+    ColumnDataSource,
+    HoverTool,
+    LinearColorMapper,
+)
+from bokeh import palettes
+import ipywidgets as widgets
+
 from .interactiveplot import InteractivePlot
 
 
-class Pca(InteractivePlot):
+class PCA(InteractivePlot):
+
+    def Configure(self, plots=None, coloringColumn=None, coloringPalette='Magma256', coloringStyle='Continuous', nCols=3):
+        """Configures the PCA plot.
+
+        Parameters
+        ----------
+        plots: List[AnyStr] or List[Tuple[AnyStr, AnyStr]]
+            The charts that must be drawn. This can be a list of strings or a list of pairs of strings.
+        coloringColumn: str
+            The name of the column that the coloring is based on.
+        coloringPalette: str
+            The name of the palette, recognized by Bokeh.
+        coloringStyle: Literal['Categorical', 'Continuous']
+            Either `Categorical` or `Continuous` as a string.
+        nCols: int
+            Number of charts in a single row.
+        """
+        self._config = {
+            'plots': plots,
+            'coloringColumn': coloringColumn,
+            'coloringPalette': coloringPalette,
+            'coloringStyle': coloringStyle,
+            'nCols': nCols,
+        }
+
+    def Widgets(self):
+        return {
+            **super(PCA, self).Widgets(),
+            'plots': widgets.Text(value='[]'),
+            'coloringColumn': widgets.Text(value='columnName'),
+            'coloringPalette': widgets.Select(options=[
+                'Greys256', 'Inferno256', 'Magma256', 'Plasma256', 'Viridis256', 'Cividis256', 'Turbo256',  # Continuous
+                'Category10', 'Category20', 'Category20b', 'Category20c', 'Accent', 'GnBu', 'PRGn', 'Paired',  # Categorical
+            ], value='Turbo256'),
+            'coloringStyle': widgets.Select(options=['Categorical', 'Continuous'], value='Continuous'),
+            'nCols': widgets.IntSlider(value=3, min=1),
+        }
+
+    def _Plots(self):
+        plots = self._config['plots']
+        nCols = self._config['nCols']
+        if all(isinstance(element, str) for element in plots):  # List of strings.
+            plots = [(first, second) for first in plots for second in plots if first != second]
+        # Otherwise, we assume `plots` is already a list of tuples, containing a pair of strings.
+        # We now group them up in batches of `nCols`.
+        plots = [plots[start:start+nCols] for start in range(0, len(plots), nCols)]
+        return plots
+
+    def _Draw(self, x, y):
+        plot = figure(x_axis_label=x, y_axis_label=y)
+        data = (self._data.loc[self._filtered] if self._filtered is not None else self._data).copy()
+        if self._highlighted is not None:
+            data['_opacity_'] = data.index.isin(self._highlighted).astype('int') * .5 + .5
+            alpha = '_opacity_'
+        else:
+            alpha = 1
+        if self._config['coloringColumn'] is not None:
+            targetColumn = data[self._config['coloringColumn']]
+            if self._config['coloringStyle'] == 'Categorical':
+                palette = getattr(palettes, self._config['coloringPalette'])
+                palette = next(value for key, value in palette.items() if key > targetColumn.nunique())
+                mapper = CategoricalColorMapper(palette=palette, factors=targetColumn.unique().tolist())
+            else:
+                mapper = LinearColorMapper(palette=self._config['coloringPalette'], low=targetColumn.min(), high=targetColumn.max())
+            color = {'field': self._config['coloringColumn'], 'transform': mapper}
+        else:
+            color = 'gray'
+        source = ColumnDataSource(data)
+        plot.circle(source=source, x=x, y=y, color=color, alpha=alpha, size=5)
+        plot.add_tools(HoverTool(tooltips=[(key, f'@{{{value}}}') for key, value in self._hovers.items()]))
+        return plot
 
     def Generate(self):
-        """
-        The method must be overridden to implement the functionality related to populating a Bokeh `Figure` with the
-        necessary glyphs. To do so, the settings stored via `.Configure()` must be taken into account.
-        """
-        pass
+        grid = gridplot([[self._Draw(x, y) for x, y in row] for row in self._Plots()])
+        return grid
