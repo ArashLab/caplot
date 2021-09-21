@@ -120,6 +120,15 @@ class InteractivePlot(abc.ABC):
         """
         self._hovers = hovers
 
+    def AddHover(self, hovers):
+        ### take a dict of {lable:colName}
+        pass
+
+    def DropHover(self, hovers):
+        ### take a list of [lable]
+        pass
+
+
     @abc.abstractmethod
     def Configure(self, **kwargs):
         """
