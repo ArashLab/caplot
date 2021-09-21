@@ -122,11 +122,10 @@ class InteractivePlot(abc.ABC):
 
     def AddHover(self, hovers):
         self._hovers.update(hovers)
-        pass
 
-    def DropHover(self, hovers):
-        ### take a list of [lable]
-        pass
+    def DropHover(self, hoverLabels):
+        for key in hoverLabels:
+            del self._hovers[key] ### Check if key exist in the hovers
 
 
     @abc.abstractmethod
