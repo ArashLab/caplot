@@ -13,13 +13,19 @@ from sqlalchemy import create_engine
 
 class InteractivePlot(abc.ABC):
 
-    def __init__(self):
+    def __init__(self, source=None, loadQuery=None, filterQuery=None, keep=True, highlightQuery=None, highlight=True, hovers=None):
         self._data = None
         self._filtered = None
         self._highlighted = None
         self._widgets = None
         self._hovers = None
         self._config = None
+
+        if source:
+            self.LoadData(source, loadQuery)
+            self.Filter(filterQuery, keep)
+            self.Highlight(highlightQuery, highlight)
+            self.Hover(hovers)
 
     def LoadData(self, source, sqlQuery=None):
         """Imports data as a Pandas DataFrame.
