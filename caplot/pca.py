@@ -1,4 +1,6 @@
-from typing import Union, List, Tuple, AnyStr, Literal, Iterable
+import json
+import sys
+from typing import AnyStr, List, Literal, Tuple
 
 from bokeh.plotting import figure
 from bokeh.layouts import gridplot
@@ -21,7 +23,7 @@ class PCA(InteractivePlot):
 
         Parameters
         ----------
-        plots: List[AnyStr] or List[Tuple[AnyStr, AnyStr]]
+        plots: List[AnyStr] or List[Tuple[AnyStr, AnyStr]] or str
             The charts that must be drawn. This can be a list of strings or a list of pairs of strings.
         coloringColumn: str
             The name of the column that the coloring is based on.
@@ -34,7 +36,7 @@ class PCA(InteractivePlot):
         """
         # Not a good approach regarding plots, but the alternative requires a better widget for the field.
         self._config = {
-            'plots': eval(plots) if isinstance(plots, str) else plots,
+            'plots': plots if isinstance(plots, dict) else json.loads(plots),
             'coloringColumn': coloringColumn,
             'coloringPalette': coloringPalette,
             'coloringStyle': coloringStyle,
@@ -58,7 +60,10 @@ class PCA(InteractivePlot):
         plots = self._config['plots']
         numCols = self._config['numCols']
         if all(isinstance(element, str) for element in plots):  # List of strings.
-            plots = [(first, second) for first in plots for second in plots if first != second]
+            if len(plots) == 2:
+                plots = [plots]
+            else:
+                plots = [(first, second) for first in plots for second in plots if first != second]
         # Otherwise, we assume `plots` is already a list of tuples, containing a pair of strings.
         # We now group them up in batches of `numCols`.
         plots = [plots[start:start+numCols] for start in range(0, len(plots), numCols)]
@@ -72,21 +77,25 @@ class PCA(InteractivePlot):
             alpha = '_opacity_'
         else:
             alpha = 1
-        if self._config['coloringColumn']:
-            targetColumn = data[self._config['coloringColumn']]
-            if self._config['coloringStyle'] == 'Categorical':
-                palette = getattr(palettes, self._config['coloringPalette'])
-                palette = next(value for key, value in palette.items() if key > targetColumn.nunique())
-                mapper = CategoricalColorMapper(palette=palette, factors=targetColumn.unique().tolist())
+        try:
+            if self._config['coloringColumn']:
+                targetColumn = data[self._config['coloringColumn']]
+                if self._config['coloringStyle'] == 'Categorical':
+                    palette = getattr(palettes, self._config['coloringPalette'])
+                    palette = next(value for key, value in palette.items() if key > targetColumn.nunique())
+                    mapper = CategoricalColorMapper(palette=palette, factors=targetColumn.unique().tolist())
+                else:
+                    mapper = LinearColorMapper(palette=self._config['coloringPalette'], low=targetColumn.min(), high=targetColumn.max())
+                color = {'field': self._config['coloringColumn'], 'transform': mapper}
             else:
-                mapper = LinearColorMapper(palette=self._config['coloringPalette'], low=targetColumn.min(), high=targetColumn.max())
-            color = {'field': self._config['coloringColumn'], 'transform': mapper}
+                color = 'gray'
+        except StopIteration:
+            print('The chosen color palette does not have enough distinct colors for the selected column.', file=sys.stderr)
         else:
-            color = 'gray'
-        source = ColumnDataSource(data)
-        plot.circle(source=source, x=x, y=y, color=color, alpha=alpha, size=5)
-        plot.add_tools(HoverTool(tooltips=[(key, f'@{{{value}}}') for key, value in self._hovers.items()]))
-        return plot
+            source = ColumnDataSource(data)
+            plot.circle(source=source, x=x, y=y, color=color, alpha=alpha, size=5)
+            plot.add_tools(HoverTool(tooltips=[(key, f'@{{{value}}}') for key, value in self._hovers.items()]))
+            return plot
 
     def Generate(self):
         grid = gridplot([[self._Draw(x, y) for x, y in row] for row in self._Plots()])
