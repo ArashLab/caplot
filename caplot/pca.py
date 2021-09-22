@@ -15,8 +15,14 @@ import ipywidgets as widgets
 
 from .interactiveplot import InteractivePlot
 
-
 class PCA(InteractivePlot):
+
+    def __init__(self, source=None, loadQuery=None, filterQuery=None, keep=True, highlightQuery=None, highlight=True, hovers=None, plots=None, coloringColumn=None, coloringPalette='Magma256', coloringStyle='Continuous', numCols=3):
+        if source:
+            super(PCA, self).__init__(source=source, loadQuery=loadQuery, filterQuery=filterQuery, keep=keep, highlightQuery=highlightQuery, highlight=highlight, hovers=hovers)
+            if plots:
+                self.Configure(plots=plots, coloringColumn=coloringColumn, coloringPalette=coloringPalette, coloringStyle=coloringStyle, numCols=numCols)
+
 
     def Configure(self, plots=None, coloringColumn=None, coloringPalette='Magma256', coloringStyle='Continuous', numCols=3):
         """Configures the PCA plot.
