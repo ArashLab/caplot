@@ -1,47 +1,103 @@
 import abc
+import json
 import os.path
 import urllib.parse
-import json
 
 import ipywidgets as widgets
 import pandas as pd
-from stringcase import titlecase
 from IPython.display import display
+from bokeh.core.validation import silence
 from bokeh.io.export import get_screenshot_as_png
 from bokeh.plotting import output_file, show
 from pandasql import sqldf
 from sqlalchemy import create_engine
+from stringcase import titlecase
 
 
 class InteractivePlot(abc.ABC):
 
-    def __init__(self, source=None, loadQuery=None, filterQuery=None, keep=True, highlightQuery=None, highlight=True, hovers=None):
-        self._data = None
-        self._filtered = None
-        self._highlighted = None
-        self._widgets = None
-        self._config = {}
-        self._hovers = {}
-
-        if source is not None:
-            self.LoadData(source, loadQuery)
-            if filterQuery is not None:
-                self.Filter(filterQuery, keep)
-            if highlightQuery is not None:
-                self.Highlight(highlightQuery, highlight)
-            if hovers is not None:
-                self.Hover(hovers)
-
-    def LoadData(self, source, sqlQuery=None):
-        """Imports data as a Pandas DataFrame.
+    def __init__(self, source=None, loadQuery=None, filter=None, invertFilter=None, highlight=None, invertHighlight=None, hovers=None):
+        """
+        `InteractivePlot` serves as the base class for all charts in CAPlot. The class handles all functionalities
+        related to I/O, while also providing an interface for filtering through data and highlighting certain points,
+        which is common to all types of charts.
 
         Parameters
         ----------
-        source: str, pd.DataFrame
-            Could point to a SQL database, a tabular file or a Pandas DataFrame.
-        sqlQuery
-            If the source is a SQL database, will be used to retrieve relevant data.
+        source: str or pd.DataFrame
+            Path to a file Pandas can read from, the URL for a SQL database, or a literal DataFrame.
+        loadQuery: str
+            A SQL query ran on the data on initialization. This argument is required when connecting to a SQL database,
+            but optional for other supported inputs. This would limit the data that is kept in memory.
+        filter: str
+            An optional SQL query to specify which records must be kept in.
+        invertFilter: str
+            An optional SQL query to specify which records must be left out.
+        highlight: str
+            An optional SQL query to specify which records must be highlighted.
+        invertHighlight: str
+            An optional SQL query to specify which records must not be highlighted, while the rest are.
+        hovers: dict
+            A mapping of arbitrary labels to certain columns in the data source.
         """
+        self._data = None
+        self._filter = None
+        self._invertFilter = None
+        self._filtered = None
+        self._highlight = None
+        self._invertHighlight = None
+        self._highlighted = None
+        self._hovers = None
+        self._widgets = None
+        self._safeWarnings = set()
+        # Initializations
+        if source is not None:
+            self.data = source if loadQuery is None else (source, loadQuery)
+            assert filter is None or invertFilter is None, 'You can define either "filter" or "invertFilter".'
+            assert highlight is None or invertHighlight is None, 'You can define either "highlight" or "invertHighlight".'
+            if filter is not None:
+                self.filter = filter
+            if invertFilter:
+                self.invertFilter = invertFilter
+            if highlight is not None:
+                self.highlight = highlight
+            if invertHighlight is not None:
+                self.invertFilter = invertFilter
+            if hovers is not None:
+                self.hovers = hovers
+
+    @staticmethod
+    def Subset(sqlQuery, tables):
+        """Uses `sqldf` to execute a query on the internal DataFrame.
+
+        Parameters
+        ----------
+        sqlQuery: str
+            Desired query.
+        tables: dict
+            Tables accessible in the query.
+
+        Returns
+        -------
+        df: pd.DataFrame
+            The resulting dataframe.
+        """
+        return sqldf(sqlQuery, tables)
+
+    @property
+    def data(self):
+        """
+        pd.DataFrame: Internal data the plot is working with.
+
+        You can assign a path to a file Pandas can read from, the URL for a SQL database, or a literal DataFrame. You
+        can also pass a query as the second element (in a tuple) which will serve as the `loadQuery`, limiting the data
+        that is kept in memory.
+        """
+        return self._data
+
+    @data.setter
+    def data(self, value):
+        source, sqlQuery = value if isinstance(value, tuple) else (value, None)
         if isinstance(source, pd.DataFrame):
             self._data = source
         elif isinstance(source, str):
@@ -70,89 +126,86 @@ class InteractivePlot(abc.ABC):
             msg = 'The source can be a DataFrame, a path to a file that Pandas can read, or the URL for a SQL database.'
             raise RuntimeError(msg)  # Custom exception needed?
 
-    @staticmethod
-    def Subset(sqlQuery, tables):
-        """Uses `sqldf` to execute a query on the internal DataFrame.
+    @property
+    def filter(self):
+        """
+        str: An optional SQL query to specify which records must be kept in.
 
-        Parameters
-        ----------
-        sqlQuery: str
-            Desired query.
-        tables: dict
-            Tables accessible in the query.
+        Filtration occurs at the time of assignment.
+        """
+        return self._filter
 
+    @filter.setter
+    def filter(self, query):
+        self._filter, self._invertFilter = query, None
+        self._filtered = self.Subset(query, {'data': self._data.reset_index()}).set_index('index').index
+
+    @property
+    def invertFilter(self):
+        """
+        str: An optional SQL query to specify which records must be left out.
+
+        Filtration occurs at the time of assignment.
+        """
+        return self._invertFilter
+    
+    @invertFilter.setter
+    def invertFilter(self, query):
+        self._filter, self._invertFilter = None, query
+        self._filtered = self._data.drop(self.Subset(query, {'data': self._data.reset_index()}).set_index('index').index).index
+
+    @property
+    def highlight(self):
+        """
+        str: An optional SQL query to specify which records must be highlighted.
+
+        Filtration occurs at the time of assignment.
+        """
+        return self._highlight
+    
+    @highlight.setter
+    def highlight(self, query):
+        self._highlight, self._invertHighlight = query, None
+        self._highlighted = self.Subset(query, {'data': self._data.reset_index()}).set_index('index').index
+
+    @property
+    def invertHighlight(self):
+        """
+        str: An optional SQL query to specify which records must not be highlighted, while others are.
+
+        Filtration occurs at the time of assignment.
+        """
+        return self._invertHighlight
+
+    @invertHighlight.setter
+    def invertHighlight(self, query):
+        self._highlight, self._invertHighlight = None, query
+        self._highlighted = self._data.drop(self.Subset(query, {'data': self._data.reset_index()}).set_index('index').index).index
+
+    def _ProcessedData(self):
+        """
         Returns
         -------
-        df: pd.DataFrame
-            The resulting dataframe.
+        pd.DataFrame: Filtered data, with an extra column, `__alpha__`, which is used to highlight certain records.
         """
-        return sqldf(sqlQuery, tables)
+        df = (self._data.loc[self._filtered] if self._filtered is not None else self._data).copy()
+        df['__alpha__'] = (df.index.isin(self._highlighted).astype('int') * .5 + .5) if self._highlighted is not None else 1
+        return df
 
-    def Filter(self, sqlQuery, keep=True):
-        """Filters through the data, based on the passed query.
-
-        Parameters
-        ----------
-        sqlQuery: str
-            Desired query.
-        keep: bool
-            Whether the selected rows are to be included or excluded when plotting the chart.
+    @property
+    def hovers(self):
         """
-        # `sqldf` seems to drop the index. Therefore, we add it as a column and then convert it back.
-        rows = self.Subset(sqlQuery, {'data': self._data.reset_index()}).set_index('index')
-        self._filtered = rows.index if keep else self._data.drop(rows.index).index
+        dict: A mapping of arbitrary labels to certain columns in the data source.
 
-    def Highlight(self, sqlQuery, highlight=True):
-        """Highlights the rows specified by the query.
-
-        Parameters
-        ----------
-        sqlQuery: str
-            Desired query.
-        highlight: bool
-            Whether the selected rows are to be highlighted or should the rest be, when plotting the chart.
+        On assignment, this property expects either a dict, or a string which will be parsed as a JSON object.
         """
-        rows = self.Subset(sqlQuery, {'data': self._data.reset_index()}).set_index('index')
-        self._highlighted = rows.index if highlight else self._data.drop(rows.index).index
+        if self._hovers is None:
+            self._hovers = dict()
+        return self._hovers
 
-    def Hover(self, hovers):
-        """Sets the internal `_hovers` dictionary.
-
-        Parameters
-        ----------
-        hovers: dict
-            Descriptions shown when certain objects are hovered.
-        """
-        self._hovers = hovers
-
-    def AddHover(self, hovers):
-        """Adds the specified keys and values to the hover set.
-
-        Parameters
-        ----------
-        hovers: dict
-            Keys and values that must be added.
-        """
-        self._hovers = {**self._hovers, **hovers}
-
-    def DropHover(self, hoverLabels):
-        """Drops the specified keys in the list from the hover set.
-
-        Parameters
-        ----------
-        hoverLabels: list
-            Keys that must be dropped.
-        """
-        for key in hoverLabels:
-            self._hovers.pop(key)
-
-    @abc.abstractmethod
-    def Configure(self, **kwargs):
-        """
-        The method must be overridden to implement the functionality related to storing the settings. Replace the
-        `**kwargs` with appropriate ones.
-        """
-        pass
+    @hovers.setter
+    def hovers(self, mapping):
+        self._hovers = mapping if isinstance(mapping, dict) else json.loads(mapping)
 
     def Widgets(self):
         """
@@ -165,29 +218,37 @@ class InteractivePlot(abc.ABC):
             Contains the widgets as its values, and the name of their holding variables as keys.
         """
         return {
-            'filterQuery': widgets.Text(value='select * from data'),
-            'highlightQuery': widgets.Text(value='select * from data'),
-            'hovers': widgets.Text(value='{"Label": "Column Name"}'),
+            'filter': widgets.Text(value=self.filter, placeholder='SQL Query'),
+            'highlight': widgets.Text(value=self.highlight, placeholder='SQL Query'),
+            'hovers': widgets.Text(value=json.dumps(self.hovers), placeholder='JSON Object'),
         }
 
     @abc.abstractmethod
     def Generate(self):
         """
-        The method must be overridden to implement the functionality related to populating a Bokeh `Figure` with the
-        necessary glyphs. To do so, the settings stored via `.Configure()` must be taken into account.
+        The method generates a Bokeh plot and returns it.
+
+        This method is meant to be heart of subclasses, containing their primary functionalities.
         """
         pass
 
     def Show(self):
         """
-        The method simply calls `.Generate()` and shows the resulting chart.
+        The method displays the chart, with the latest changes. Some charts might cause predetermined warnings which are
+        safe to ignore. The method will silence these warnings temporarily.
         """
-        show(self.Generate())
+        plot = self.Generate()
+        for error_code in self._safeWarnings:
+            silence(error_code, True)
+        show(plot)
+        for error_code in self._safeWarnings:
+            silence(error_code, False)
 
     def SaveAs(self, filepath):
-        """Stores the plot with the latest changes as the specified file. The method of exporting is inferred based on
-        the file extension format of `filepath`. If `filepath` doesn't end in an extension, it is assumed that all
-        possible outputs must be generated.
+        """
+        The method stores the plot with the latest changes as the specified file. The method of exporting is inferred
+        based on the file extension format of `filepath`. If `filepath` doesn't end in an extension, it is assumed that
+        all possible outputs must be generated.
 
         Parameters
         ----------
@@ -209,27 +270,14 @@ class InteractivePlot(abc.ABC):
         elif extension in ('.html', ''):
             output_file(filename=filepath, title='Plot Generated by AB Plot')
 
-    def SetupAndShow(self, filterQuery=None, highlightQuery=None, hovers=None, **kwargs):
-        """Sets up the plot and shows it. The method is designed to work with `widgets.interactive_output`.
-
-        Under normal circumstances, there's no need to override this function. But you certainly can do so.
-
-        Parameters
-        ----------
-        filterQuery: str
-            A query to filter through the data.
-        highlightQuery: str
-            A query to highlight certain datapoints.
-        hovers: str
-            A JSON dict, mapping labels to columns.
+    def SetupAndShow(self, **kwargs):
         """
-        if filterQuery:
-            self.Filter(filterQuery)
-        if highlightQuery:
-            self.Highlight(highlightQuery)
-        if hovers:
-            self.Hover(hovers if isinstance(hovers, dict) else json.loads(hovers))
-        self.Configure(**kwargs)
+        The method is intended to be used with `ipywidgets.interactive_output`. As its arguments, it receives **kwargs
+        mapping instance attribute names to their desired values. It will assign them before attempting to display the
+        chart.
+        """
+        for attr, value in kwargs.items():
+            setattr(self, attr, value)
         self.Show()
 
     def ShowWithForm(self):

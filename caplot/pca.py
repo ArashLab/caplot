@@ -1,108 +1,208 @@
+import itertools
 import json
-import sys
-from typing import AnyStr, List, Literal, Tuple
 
-from bokeh.plotting import figure
-from bokeh.layouts import gridplot
+import ipywidgets as widgets
+import pandas as pd
+from bokeh import palettes
+from bokeh.core.validation.warnings import MISSING_RENDERERS
+from bokeh.layouts import gridplot, row
 from bokeh.models import (
     CategoricalColorMapper,
     ColumnDataSource,
     HoverTool,
-    LinearColorMapper,
-)
-from bokeh import palettes
-import ipywidgets as widgets
+    LinearColorMapper, ColorBar, )
+from bokeh.plotting import figure
 
 from .interactiveplot import InteractivePlot
 
+
 class PCA(InteractivePlot):
+    CategoricalPalettes = 'Category10', 'Category20', 'Category20b', 'Category20c', 'Accent', 'GnBu', 'PRGn', 'Paired'
+    ContinuousPalettes = 'Greys256', 'Inferno256', 'Magma256', 'Plasma256', 'Viridis256', 'Cividis256', 'Turbo256'
 
-    def __init__(self, source=None, loadQuery=None, filterQuery=None, keep=True, highlightQuery=None, highlight=True, hovers=None, plots=None, coloringColumn=None, coloringPalette='Magma256', coloringStyle='Continuous', numCols=3):
-        if source:
-            super(PCA, self).__init__(source=source, loadQuery=loadQuery, filterQuery=filterQuery, keep=keep, highlightQuery=highlightQuery, highlight=highlight, hovers=hovers)
-            if plots:
-                self.Configure(plots=plots, coloringColumn=coloringColumn, coloringPalette=coloringPalette, coloringStyle=coloringStyle, numCols=numCols)
-
-
-    def Configure(self, plots=None, coloringColumn=None, coloringPalette='Magma256', coloringStyle='Continuous', numCols=3):
-        """Configures the PCA plot.
+    def __init__(self, source=None, loadQuery=None, filter=None, invertFilter=None, highlight=None,
+                 invertHighlight=None, hovers=None, subplots=None, coloringColumn=None, coloringStyle='Categorical',
+                 coloringPalette='Category10', numCols=2, subplotWidth=400, subplotHeight=400):
+        """
+        The `PCA` class is intended to display multiple scatter subplots, pitting certain columns against one another.
 
         Parameters
         ----------
-        plots: List[AnyStr] or List[Tuple[AnyStr, AnyStr]] or str
-            The charts that must be drawn. This can be a list of strings or a list of pairs of strings.
+        source: str or pd.DataFrame
+            Path to a file Pandas can read from, the URL for a SQL database, or a literal DataFrame.
+        loadQuery: str
+            A SQL query ran on the data on initialization. This argument is required when connecting to a SQL database,
+            but optional for other supported inputs. This would limit the data that is kept in memory.
+        filter: str
+            An optional SQL query to specify which records must be kept in.
+        invertFilter: str
+            An optional SQL query to specify which records must be left out.
+        highlight: str
+            An optional SQL query to specify which records must be highlighted.
+        invertHighlight: str
+            An optional SQL query to specify which records must not be highlighted, while the rest are.
+        hovers: dict
+            A mapping of arbitrary labels to certain columns in the data source.
+        subplots: list of str or list of list of str
+            The subplots that must be drawn. When this argument is a list of strings, all combinations of the elements
+            of the list will be drawn. However, the argument can also be passed a list of pairs of column names,
+            explicitly naming the columns that must be pit together.
         coloringColumn: str
-            The name of the column that the coloring is based on.
+            The name of a column present in the data.
+        coloringStyle: str
+            Either `"Categorical"` or `"Continuous"`.
         coloringPalette: str
-            The name of the palette, recognized by Bokeh.
-        coloringStyle: Literal['Categorical', 'Continuous']
-            Either `Categorical` or `Continuous` as a string.
+            Name of a palette, supported by Bokeh and suitable for the chosen `coloringStyle`.
         numCols: int
-            Number of charts in a single row.
+            Number of subplots in each row.
+        subplotWidth: int
+            Width of each subplot.
+        subplotHeight: int
+            Height of each subplot.
         """
-        # Not a good approach regarding plots, but the alternative requires a better widget for the field.
-        self._config = {
-            'plots': plots if isinstance(plots, dict) else json.loads(plots),
-            'coloringColumn': coloringColumn,
-            'coloringPalette': coloringPalette,
-            'coloringStyle': coloringStyle,
-            'numCols': numCols,
-        }
+        super(PCA, self).__init__(source, loadQuery, filter, invertFilter, highlight, invertHighlight, hovers)
+        self._subplots = None
+        self._coloringColumn = None
+        self._coloringPalette = None
+        self._coloringStyle = None
+        self._colorBar = None
+        self.numCols = numCols
+        self.subplotWidth = subplotWidth
+        self.subplotHeight = subplotHeight
+        # Initializations
+        if subplots is not None:
+            self.subplots = subplots
+        if coloringColumn is not None:
+            self.coloringColumn = coloringColumn
+            if coloringStyle is not None:
+                self.coloringStyle = coloringStyle
+            if coloringPalette is not None:
+                self.coloringPalette = coloringPalette
+
+    @property
+    def subplots(self):
+        """
+        list of list of str: A grid of string pairs, specifying the columns that must be plotted against one another.
+
+        When the property gets assigned a list of column names, it will generate a grid of their binary combinations.
+        """
+        if not self._subplots:
+            return []
+        if all(isinstance(element, str) for element in self._subplots):
+            subplots = list(itertools.combinations(self._subplots, 2))
+        elif all(isinstance(element, list) for element in self._subplots):
+            subplots = self._subplots  # The structure of `value` is already what we want.
+        else:
+            raise RuntimeError('Specified "subplots" is invalid. This attribute can be a list of strings, or a list of pairs of strings.')
+        return [subplots[start:start + self.numCols] for start in range(0, len(subplots), self.numCols)]
+
+    @subplots.setter
+    def subplots(self, value):
+        self._subplots = value if isinstance(value, list) else json.loads(value)
+
+    @property
+    def coloringColumn(self):
+        """
+        str: Name of a column present in the data.
+        """
+        return self._coloringColumn
+
+    @coloringColumn.setter
+    def coloringColumn(self, value):
+        if self.data is not None:
+            assert value in self.data.columns, f'Could not find a column named "{value}" in data.'
+        self._coloringColumn = value
+
+    @property
+    def coloringStyle(self):
+        return self._coloringStyle
+
+    @coloringStyle.setter
+    def coloringStyle(self, value):
+        """
+        str: Name of a column present in the data.
+        """
+        assert value in ('Categorical', 'Continuous'), 'Coloring style can be "Categorical" or "Continuous".'
+        self._coloringStyle = value
+
+    @property
+    def coloringPalette(self):
+        """
+        str: Either `"Categorical"` or `"Continuous"`.
+        """
+        return self._coloringPalette
+
+    @coloringPalette.setter
+    def coloringPalette(self, value):
+        choices = self.CategoricalPalettes if self._coloringStyle == 'Categorical' else self.ContinuousPalettes
+        assert value in choices, f'Acceptable coloring palettes are: {", ".join(choices)}.'
+        self._coloringPalette = value
 
     def Widgets(self):
         return {
             **super(PCA, self).Widgets(),
-            'plots': widgets.Text(value=str(self._config.get('plots', []))),
-            'coloringColumn': widgets.Text(value=self._config.get('coloringColumn')),
-            'coloringPalette': widgets.Dropdown(options=[
-                'Greys256', 'Inferno256', 'Magma256', 'Plasma256', 'Viridis256', 'Cividis256', 'Turbo256',  # Continuous
-                'Category10', 'Category20', 'Category20b', 'Category20c', 'Accent', 'GnBu', 'PRGn', 'Paired',  # Categorical
-            ], value=self._config.get('coloringPalette', 'Turbo256')),
-            'coloringStyle': widgets.Dropdown(options=['Categorical', 'Continuous'], value=self._config.get('coloringStyle', 'Continuous')),
+            'subplots': widgets.Text(value=json.dumps(self.subplots), placeholder='JSON Array (or an array of arrays)'),
+            'coloringColumn': widgets.Dropdown(options=self.data.columns, value=self.coloringColumn) if self.data is not None else widgets.Text(value=self.coloringColumn),
+            'coloringStyle': widgets.Dropdown(options=['Categorical', 'Continuous'], value=self.coloringStyle),
+            'coloringPalette': widgets.Dropdown(options=[*self.CategoricalPalettes, *self.ContinuousPalettes], value=self.coloringPalette),
             'numCols': widgets.IntSlider(value=3, min=1, max=8),
         }
-
-    def _Plots(self):
-        plots = self._config['plots']
-        numCols = self._config['numCols']
-        if all(isinstance(element, str) for element in plots):  # List of strings.
-            if len(plots) == 2:
-                plots = [plots]
-            else:
-                plots = [(first, second) for first in plots for second in plots if first != second]
-        # Otherwise, we assume `plots` is already a list of tuples, containing a pair of strings.
-        # We now group them up in batches of `numCols`.
-        plots = [plots[start:start+numCols] for start in range(0, len(plots), numCols)]
-        return plots
+    
+    def Generate(self):
+        grid = gridplot([[self._Draw(x, y) for x, y in gridRow] for gridRow in self.subplots])
+        if self._colorBar is not None:
+            self._safeWarnings.add(MISSING_RENDERERS)  # We are doing an empty dummy plot for the color-bar.
+            dummy = figure(height=200, width=100, toolbar_location=None, min_border=0, outline_line_color=None)
+            dummy.add_layout(self._colorBar, place='left')
+            grid = row(children=[grid, dummy])
+        else:
+            self._safeWarnings.discard(MISSING_RENDERERS)
+        return grid
 
     def _Draw(self, x, y):
-        plot = figure(x_axis_label=x, y_axis_label=y)
-        data = (self._data.loc[self._filtered] if self._filtered is not None else self._data).copy()
-        if self._highlighted is not None:
-            data['_opacity_'] = data.index.isin(self._highlighted).astype('int') * .5 + .5
-            alpha = '_opacity_'
-        else:
-            alpha = 1
-        try:
-            if self._config['coloringColumn']:
-                targetColumn = data[self._config['coloringColumn']]
-                if self._config['coloringStyle'] == 'Categorical':
-                    palette = getattr(palettes, self._config['coloringPalette'])
-                    palette = next(value for key, value in palette.items() if key > targetColumn.nunique())
-                    mapper = CategoricalColorMapper(palette=palette, factors=targetColumn.unique().tolist())
-                else:
-                    mapper = LinearColorMapper(palette=self._config['coloringPalette'], low=targetColumn.min(), high=targetColumn.max())
-                color = {'field': self._config['coloringColumn'], 'transform': mapper}
-            else:
-                color = 'gray'
-        except StopIteration:
-            print('The chosen color palette does not have enough distinct colors for the selected column.', file=sys.stderr)
-        else:
-            source = ColumnDataSource(data)
-            plot.circle(source=source, x=x, y=y, color=color, alpha=alpha, size=5)
-            plot.add_tools(HoverTool(tooltips=[(key, f'@{{{value}}}') for key, value in self._hovers.items()]))
-            return plot
+        """
+        The method draws a single PCA plot, pitting `x` against `y`.
 
-    def Generate(self):
-        grid = gridplot([[self._Draw(x, y) for x, y in row] for row in self._Plots()])
-        return grid
+        Parameters
+        ----------
+        x: str
+            Name of a column shown on the horizontal axis.
+        y: str
+            Name of a column shown on the vertical axis.
+
+        Returns
+        -------
+        bokeh.models.plots.Plot
+            Drawn subplot.
+        """
+        self._colorBar = None  # In case of a major change in settings, we don't want the old color-bar hanging around!
+        subplot = figure(width=self.subplotWidth, height=self.subplotHeight, x_axis_label=x, y_axis_label=y)
+        data = self._ProcessedData()
+        if self.coloringColumn:
+            coloringColumn = self.coloringColumn
+            targetColumn = data[self.coloringColumn]
+            coloringStyle = self.coloringStyle or ('Categorical' if targetColumn.nunique() <= 10 else 'Continuous')
+            if coloringStyle == 'Categorical':
+                try:
+                    assert self.coloringPalette in self.CategoricalPalettes, 'Selected palette is not suitable for categorical data.'
+                    palette = getattr(palettes, self.coloringPalette)
+                    palette = next(value for key, value in palette.items() if key > targetColumn.nunique())
+                except StopIteration:
+                    raise RuntimeError('The chosen color palette does not have enough distinct colors for the selected column.')
+                else:
+                    if pd.api.types.is_numeric_dtype(targetColumn.dtype):
+                        targetColumn = targetColumn.astype('str')
+                        data['__category__'] = targetColumn
+                        coloringColumn = '__category__'
+                    mapper = CategoricalColorMapper(palette=palette, factors=targetColumn.unique().tolist())
+            else:
+                assert self.coloringPalette in self.ContinuousPalettes, 'Selected palette is not suitable for continuous data.'
+                mapper = LinearColorMapper(palette=self.coloringPalette, low=targetColumn.min(), high=targetColumn.max())
+            color = {'field': coloringColumn, 'transform': mapper}
+            self._colorBar = ColorBar(color_mapper=mapper, label_standoff=12)  # Common between all subplots.
+        else:
+            color = 'blue'
+        source = ColumnDataSource(data)
+        subplot.circle(source=source, x=x, y=y, color=color, alpha='__alpha__', size=5)
+        subplot.add_tools(HoverTool(tooltips=[(key, f'@{{{value}}}') for key, value in self._hovers.items()]))
+        return subplot
