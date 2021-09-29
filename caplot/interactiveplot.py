@@ -1,13 +1,17 @@
 import abc
 import json
 import os.path
+import pickle
+import re
 import urllib.parse
 
 import ipywidgets as widgets
+import numpy as np
 import pandas as pd
 from IPython.display import display
+from bokeh.models.plots import Plot
 from bokeh.core.validation import silence
-from bokeh.io.export import get_screenshot_as_png
+from bokeh.io.export import get_screenshot_as_png, export_svg
 from bokeh.plotting import output_file, show
 from pandasql import sqldf
 from sqlalchemy import create_engine
@@ -15,8 +19,10 @@ from stringcase import titlecase
 
 
 class InteractivePlot(abc.ABC):
+    SupportedExtensions = ('.png', '.jpeg', '.svg', '.pdf', '.html', '.caplot')
 
-    def __init__(self, source=None, loadQuery=None, filter=None, invertFilter=None, highlight=None, invertHighlight=None, hovers=None):
+    def __init__(self, source=None, loadQuery=None, filter=None, invertFilter=None, filterTemplate=None, highlight=None,
+                 invertHighlight=None, highlightTemplate=None, minorAlpha=None, hovers=None):
         """
         `InteractivePlot` serves as the base class for all charts in CAPlot. The class handles all functionalities
         related to I/O, while also providing an interface for filtering through data and highlighting certain points,
@@ -33,26 +39,34 @@ class InteractivePlot(abc.ABC):
             An optional SQL query to specify which records must be kept in.
         invertFilter: str
             An optional SQL query to specify which records must be left out.
+        filterTemplate: str
+            An optional template query based on which custom widgets will be shown.
         highlight: str
             An optional SQL query to specify which records must be highlighted.
         invertHighlight: str
             An optional SQL query to specify which records must not be highlighted, while the rest are.
+        highlightTemplate: str
+            An optional template query based on which custom widgets will be shown.
+        minorAlpha: float
+            Specifies the opacity of points that have not been highlighted while some others are.
         hovers: dict
             A mapping of arbitrary labels to certain columns in the data source.
         """
         self._data = None
         self._filter = None
         self._invertFilter = None
+        self._filterTemplate = None
         self._filtered = None
         self._highlight = None
         self._invertHighlight = None
+        self._highlightTemplate = None
         self._highlighted = None
-        self._hovers = None
-        self._widgets = None
+        self._minorAlpha = 0.5
+        self._hovers = dict()
         self._safeWarnings = set()
         # Initializations
         if source is not None:
-            self.data = source if loadQuery is None else (source, loadQuery)
+            self.source = source if loadQuery is None else (source, loadQuery)
             assert filter is None or invertFilter is None, 'You can define either "filter" or "invertFilter".'
             assert highlight is None or invertHighlight is None, 'You can define either "highlight" or "invertHighlight".'
             if filter is not None:
@@ -63,8 +77,14 @@ class InteractivePlot(abc.ABC):
                 self.highlight = highlight
             if invertHighlight is not None:
                 self.invertFilter = invertFilter
-            if hovers is not None:
-                self.hovers = hovers
+        if filterTemplate is not None:
+            self.filterTemplate = filterTemplate
+        if highlightTemplate is not None:
+            self.highlightTemplate = highlightTemplate
+        if hovers is not None:
+            self.hovers = hovers
+        if minorAlpha is not None:
+            self.minorAlpha = minorAlpha
 
     @staticmethod
     def Subset(sqlQuery, tables):
@@ -85,7 +105,7 @@ class InteractivePlot(abc.ABC):
         return sqldf(sqlQuery, tables)
 
     @property
-    def data(self):
+    def source(self):
         """
         pd.DataFrame: Internal data the plot is working with.
 
@@ -95,9 +115,9 @@ class InteractivePlot(abc.ABC):
         """
         return self._data
 
-    @data.setter
-    def data(self, value):
-        source, sqlQuery = value if isinstance(value, tuple) else (value, None)
+    @source.setter
+    def source(self, value):
+        source, loadQuery = value if isinstance(value, tuple) else (value, None)
         if isinstance(source, pd.DataFrame):
             self._data = source
         elif isinstance(source, str):
@@ -105,10 +125,10 @@ class InteractivePlot(abc.ABC):
             # The following list is based on https://docs.sqlalchemy.org/en/14/dialects/#included-dialects.
             supported_dialects = ('postgresql', 'postgres', 'mysql', 'mariadb', 'sqlite', 'oracle:thin', 'sqlserver')
             if parsed.scheme.replace('jdbc:', '') in supported_dialects:
-                assert sqlQuery is not None, 'You must specify `sqlQuery` when connecting to a database.'
+                assert loadQuery is not None, 'You must specify `sqlQuery` when connecting to a database.'
                 engine = create_engine(source)
                 with engine.connect() as connection:
-                    self._data = pd.read_sql(sqlQuery, connection)
+                    self._data = pd.read_sql(loadQuery, connection)
             else:
                 (remainder, extension), compression = os.path.splitext(source), None
                 if extension in ('.gz', '.bgz', '.bz2', '.zip', '.xz'):
@@ -120,8 +140,8 @@ class InteractivePlot(abc.ABC):
                 }
                 assert extension in reading_methods, f'Unsupported extension "{extension}".'
                 self._data = reading_methods[extension](source)
-                if sqlQuery is not None:
-                    self._data = self.Subset(sqlQuery, self._data)
+                if loadQuery is not None:
+                    self._data = self.Subset(loadQuery, {'data': self._data.reset_index()}).set_index('index')
         else:
             msg = 'The source can be a DataFrame, a path to a file that Pandas can read, or the URL for a SQL database.'
             raise RuntimeError(msg)  # Custom exception needed?
@@ -148,11 +168,20 @@ class InteractivePlot(abc.ABC):
         Filtration occurs at the time of assignment.
         """
         return self._invertFilter
-    
+
     @invertFilter.setter
     def invertFilter(self, query):
         self._filter, self._invertFilter = None, query
-        self._filtered = self._data.drop(self.Subset(query, {'data': self._data.reset_index()}).set_index('index').index).index
+        self._filtered = self._data.drop(
+            self.Subset(query, {'data': self._data.reset_index()}).set_index('index').index).index
+    
+    @property
+    def filterTemplate(self):
+        return self._filterTemplate
+    
+    @filterTemplate.setter
+    def filterTemplate(self, value):
+        self._filterTemplate = value
 
     @property
     def highlight(self):
@@ -162,7 +191,7 @@ class InteractivePlot(abc.ABC):
         Filtration occurs at the time of assignment.
         """
         return self._highlight
-    
+
     @highlight.setter
     def highlight(self, query):
         self._highlight, self._invertHighlight = query, None
@@ -180,7 +209,25 @@ class InteractivePlot(abc.ABC):
     @invertHighlight.setter
     def invertHighlight(self, query):
         self._highlight, self._invertHighlight = None, query
-        self._highlighted = self._data.drop(self.Subset(query, {'data': self._data.reset_index()}).set_index('index').index).index
+        self._highlighted = self._data.drop(
+            self.Subset(query, {'data': self._data.reset_index()}).set_index('index').index).index
+
+    @property
+    def highlightTemplate(self):
+        return self._highlightTemplate
+
+    @highlightTemplate.setter
+    def highlightTemplate(self, value):
+        self._highlightTemplate = value
+
+    @property
+    def minorAlpha(self):
+        return self._minorAlpha
+
+    @minorAlpha.setter
+    def minorAlpha(self, value):
+        assert 0 <= value <= 1, 'The alpha must be in the [0,1] range.'
+        self._minorAlpha = value
 
     def _ProcessedData(self):
         """
@@ -189,7 +236,7 @@ class InteractivePlot(abc.ABC):
         pd.DataFrame: Filtered data, with an extra column, `__alpha__`, which is used to highlight certain records.
         """
         df = (self._data.loc[self._filtered] if self._filtered is not None else self._data).copy()
-        df['__alpha__'] = (df.index.isin(self._highlighted).astype('int') * .5 + .5) if self._highlighted is not None else 1
+        df['__alpha__'] = np.where(df.index.isin(self._highlighted), 1, self.minorAlpha) if (self._highlighted is not None)  else 1
         return df
 
     @property
@@ -207,21 +254,61 @@ class InteractivePlot(abc.ABC):
     def hovers(self, mapping):
         self._hovers = mapping if isinstance(mapping, dict) else json.loads(mapping)
 
+    def _WidgetsFor(self, queryTemplate):
+        mapping = dict()
+        for variableDescriptor in re.findall(r'\{.*\}', queryTemplate):
+            label, widget, *args = re.split(': ?', variableDescriptor[1:-1])
+            if widget == 'intSlider':
+                minimum, maximum, step, default = args
+                minimum, maximum, step, default = int(minimum), int(maximum), int(step), int(default)
+                widget = widgets.IntSlider(value=default, min=minimum, max=maximum, step=step)
+            elif widget == 'floatSlider':
+                minimum, maximum, step, default = args
+                minimum, maximum, step, default = float(minimum), float(maximum), float(step), float(default)
+                widget = widgets.FloatSlider(value=default, min=minimum, max=maximum, step=step)
+            elif widget == 'intBox':
+                default, = args
+                default = int(default)
+                widget = widgets.IntText(value=default)
+            elif widget == 'floatBox':
+                default, = args
+                default = float(default)
+                widget = widgets.FloatText(value=default)
+            elif widget == 'textBox':
+                default, = args
+                widget = widgets.Text(value=default)
+            elif widget in ('singleChoice', 'multipleChoice'):
+                options, default = args
+                options, default = json.loads(options), json.loads(default)
+                options = options if isinstance(options, list) else self.source[options].unique().tolist()
+                widget = widgets.Dropdown(options=options, value=default) \
+                    if widget == 'SingleChoice' else widgets.SelectMultiple(options=options, value=[default])
+            mapping[label] = widget
+        return mapping
+
+    @staticmethod
+    def _Filled(queryTemplate, values):
+        for variableDescriptor in re.findall(r'\{.*\}', queryTemplate):
+            label, *rest = re.split(': ?', variableDescriptor[1:-1])
+            v = values[label]
+            v = v[0] if isinstance(v, tuple) else v
+            v = f'"{v}"' if isinstance(v, str) else v
+            queryTemplate = queryTemplate.replace(variableDescriptor, str(v))
+        return queryTemplate
+
+    @abc.abstractmethod
     def Widgets(self):
         """
-        The method must be overridden to implement the functionality related to storing the settings. The parent method
-        implements a couple of widgets, namely, the filtering query and the highlighting query.
+        The method returns all the fields needed by the subclass, mapping their labels to their actual widgets.
+
+        This method is meant to be overridden by the subclasses.
 
         Returns
         -------
         widgets: dict
             Contains the widgets as its values, and the name of their holding variables as keys.
         """
-        return {
-            'filter': widgets.Text(value=self.filter, placeholder='SQL Query'),
-            'highlight': widgets.Text(value=self.highlight, placeholder='SQL Query'),
-            'hovers': widgets.Text(value=json.dumps(self.hovers), placeholder='JSON Object'),
-        }
+        pass
 
     @abc.abstractmethod
     def Generate(self):
@@ -229,6 +316,11 @@ class InteractivePlot(abc.ABC):
         The method generates a Bokeh plot and returns it.
 
         This method is meant to be heart of subclasses, containing their primary functionalities.
+
+        Returns
+        -------
+        plot: Plot
+            Generated plot, for further manipulation or displaying.
         """
         pass
 
@@ -243,6 +335,29 @@ class InteractivePlot(abc.ABC):
         show(plot)
         for error_code in self._safeWarnings:
             silence(error_code, False)
+
+    def _SaveAs(self, plot, prefix, extension):
+        filepath = prefix + extension
+        if extension == '.caplot':
+            with open(filepath, 'wb') as stream:
+                pickle.dump(self, stream)
+        elif extension in ('.png', '.jpeg'):
+            im = get_screenshot_as_png(plot)
+            im = im.convert('RGB')
+            im.save(filepath)
+        elif extension in ('.svg', '.pdf'):
+            export_svg(plot, filename=filepath)
+            if extension == '.pdf':
+                try:
+                    from svglib.svglib import svg2rlg
+                    from reportlab.graphics import renderPDF
+                except ImportError:
+                    raise RuntimeError('You need to install "svglib" and "reportlab" for PDF exports.')
+                else:
+                    drawing = svg2rlg(filepath)
+                    renderPDF.drawToFile(drawing, filepath)
+        elif extension == '.html':
+            output_file(filename=filepath, title='Plot Generated by CAPlot')
 
     def SaveAs(self, filepath):
         """
@@ -262,31 +377,74 @@ class InteractivePlot(abc.ABC):
         """
         plot = self.Generate()
         prefix, extension = os.path.splitext(filepath)
-        assert extension in ('.png', '.jpeg', '.pdf', '.html', ''), 'Unsupported'
-        if extension in ('.png', '.jpeg', '.pdf', ''):
-            im = get_screenshot_as_png(plot)
-            im = im.convert('RGB')
-            im.save(filepath)
-        elif extension in ('.html', ''):
-            output_file(filename=filepath, title='Plot Generated by AB Plot')
+        assert extension in self.SupportedExtensions, 'Unsupported file extension format.'
+        for extension in ([extension] if extension else self.SupportedExtensions):
+            self._SaveAs(plot, prefix, extension)
 
-    def SetupAndShow(self, **kwargs):
-        """
-        The method is intended to be used with `ipywidgets.interactive_output`. As its arguments, it receives **kwargs
-        mapping instance attribute names to their desired values. It will assign them before attempting to display the
-        chart.
-        """
-        for attr, value in kwargs.items():
-            setattr(self, attr, value)
-        self.Show()
+    @staticmethod
+    def _GenerateGrid(mapping, keepCasing=False):
+        grid = widgets.GridspecLayout(len(mapping), 2)
+        for index, (label, widget) in enumerate(mapping.items()):
+            grid[index, 0], grid[index, 1] = widgets.Label(label if keepCasing else titlecase(label)), widget
+        return grid
 
     def ShowWithForm(self):
         """
-        Displays a form for configuring the plot. Changes in the widgets will immediately trigger and take effect in the
-        chart.
+        The method is intended to be used in notebooks. It will list all widgets defined for the plot, along with a
+        button that when triggered, will attempt to assign the widgets' values to the instance and then plot the result.
         """
-        self._widgets = self.Widgets()
-        specified_config = {name: widget for name, widget in self._widgets.items()}
-        out = widgets.interactive_output(self.SetupAndShow, specified_config)
-        ui = widgets.VBox([widgets.HBox([widgets.Label(titlecase(name)), widget]) for name, widget in self._widgets.items()])
-        display(ui, out)
+        # Interactive Plot Widgets
+        filterWidgets = self._WidgetsFor(self.filterTemplate) if self.filterTemplate else \
+            {'filterQuery': widgets.Text(value=self.filter, placeholder='SQL Query')}
+        filterForm = self._GenerateGrid(filterWidgets)
+        highlightWidgets = self._WidgetsFor(self.highlightTemplate) if self.highlightTemplate else \
+            {'highlightQuery': widgets.Text(value=self.highlight, placeholder='SQL Query')}
+        highlightForm = self._GenerateGrid(highlightWidgets)
+        hoverWidgets = {'hovers': widgets.Text(value=json.dumps(self.hovers), placeholder='JSON Object')}
+        hoverForm = self._GenerateGrid(hoverWidgets)
+        # Subclass Widgets
+        subclassWidgets = self.Widgets()
+        subclassForm = self._GenerateGrid(subclassWidgets)
+        # Defining the Output Slot and the "Show" Button
+        output = widgets.Output()
+        button = widgets.Button(description='Show')
+
+        # The Callback Function Triggered When the Button is Clicked
+        def callback(button):
+            button.description = '...'  # To indicate that the process is being performed.
+            button.disabled = True
+            output.clear_output()
+            with output:
+                # Specifying the Filtering Query
+                if self.filterTemplate is not None:
+                    values = {label: widget.value for label, widget in filterWidgets.items()}
+                    filterQuery = self._Filled(self.filterTemplate, values)
+                else:
+                    filterQuery = filterWidgets['filterQuery'].value
+                if filterQuery:
+                    self.filter = filterQuery
+                # Specifying the Highlighting Query
+                if self.highlightTemplate is not None:
+                    values = {label: widget.value for label, widget in highlightWidgets.items()}
+                    highlightQuery = self._Filled(self.highlightTemplate, values)
+                else:
+                    highlightQuery = highlightWidgets['highlightQuery'].value
+                if highlightQuery:
+                    self.highlight = highlightQuery
+                # Specifying the Hover Setting
+                hoverMapping = hoverWidgets['hovers'].value
+                if hoverMapping:
+                    self.hovers = hoverMapping
+                # Assigning the Properties in the Subclass
+                for attr, widget in subclassWidgets.items():
+                    if widget.value not in (None, ''):  # Can't rule out all falsy values. Might limit this further.
+                        setattr(self, attr, widget.value)
+                self.Show()
+            button.disabled = False
+            button.description = 'Show'
+
+        # Binding the Callback Function to the Button
+        button.on_click(callback)
+        # Displaying All Components
+        ui = widgets.VBox([filterForm, highlightForm, hoverForm, subclassForm, button, output])
+        display(ui)

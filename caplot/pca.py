@@ -20,9 +20,10 @@ class PCA(InteractivePlot):
     CategoricalPalettes = 'Category10', 'Category20', 'Category20b', 'Category20c', 'Accent', 'GnBu', 'PRGn', 'Paired'
     ContinuousPalettes = 'Greys256', 'Inferno256', 'Magma256', 'Plasma256', 'Viridis256', 'Cividis256', 'Turbo256'
 
-    def __init__(self, source=None, loadQuery=None, filter=None, invertFilter=None, highlight=None,
-                 invertHighlight=None, hovers=None, subplots=None, coloringColumn=None, coloringStyle='Categorical',
-                 coloringPalette='Category10', numCols=2, subplotWidth=400, subplotHeight=400):
+    def __init__(self, source=None, loadQuery=None, filter=None, invertFilter=None, filterTemplate=None, highlight=None,
+                 invertHighlight=None, highlightTemplate=None, minorAlpha=None, hovers=None, subplots=None,
+                 coloringColumn=None, coloringStyle='Categorical', coloringPalette='Category10', numCols=2,
+                 subplotWidth=400, subplotHeight=400, pointSize=5):
         """
         The `PCA` class is intended to display multiple scatter subplots, pitting certain columns against one another.
 
@@ -37,10 +38,16 @@ class PCA(InteractivePlot):
             An optional SQL query to specify which records must be kept in.
         invertFilter: str
             An optional SQL query to specify which records must be left out.
+        filterTemplate: str
+            An optional template query based on which custom widgets will be shown.
         highlight: str
             An optional SQL query to specify which records must be highlighted.
         invertHighlight: str
             An optional SQL query to specify which records must not be highlighted, while the rest are.
+        highlightTemplate: str
+            An optional template query based on which custom widgets will be shown.
+        minorAlpha: float
+            Specifies the opacity of points that have not been highlighted while some others are.
         hovers: dict
             A mapping of arbitrary labels to certain columns in the data source.
         subplots: list of str or list of list of str
@@ -59,8 +66,11 @@ class PCA(InteractivePlot):
             Width of each subplot.
         subplotHeight: int
             Height of each subplot.
+        pointSize: int or float
+            Passed directly to Bokeh to specify the size of all points.
         """
-        super(PCA, self).__init__(source, loadQuery, filter, invertFilter, highlight, invertHighlight, hovers)
+        super(PCA, self).__init__(source, loadQuery, filter, invertFilter, filterTemplate, highlight, invertHighlight,
+                                  highlightTemplate, minorAlpha, hovers)
         self._subplots = None
         self._coloringColumn = None
         self._coloringPalette = None
@@ -69,6 +79,7 @@ class PCA(InteractivePlot):
         self.numCols = numCols
         self.subplotWidth = subplotWidth
         self.subplotHeight = subplotHeight
+        self.pointSize = pointSize
         # Initializations
         if subplots is not None:
             self.subplots = subplots
@@ -82,10 +93,17 @@ class PCA(InteractivePlot):
     @property
     def subplots(self):
         """
-        list of list of str: A grid of string pairs, specifying the columns that must be plotted against one another.
+        list of str or list of list of str: A grid of string pairs, specifying the columns that must be plotted against one another.
 
         When the property gets assigned a list of column names, it will generate a grid of their binary combinations.
         """
+        return self._subplots or []
+
+    @subplots.setter
+    def subplots(self, value):
+        self._subplots = value if isinstance(value, list) else json.loads(value)
+
+    def _SubplotsOrganized(self):
         if not self._subplots:
             return []
         if all(isinstance(element, str) for element in self._subplots):
@@ -96,10 +114,6 @@ class PCA(InteractivePlot):
             raise RuntimeError('Specified "subplots" is invalid. This attribute can be a list of strings, or a list of pairs of strings.')
         return [subplots[start:start + self.numCols] for start in range(0, len(subplots), self.numCols)]
 
-    @subplots.setter
-    def subplots(self, value):
-        self._subplots = value if isinstance(value, list) else json.loads(value)
-
     @property
     def coloringColumn(self):
         """
@@ -109,8 +123,8 @@ class PCA(InteractivePlot):
 
     @coloringColumn.setter
     def coloringColumn(self, value):
-        if self.data is not None:
-            assert value in self.data.columns, f'Could not find a column named "{value}" in data.'
+        if self.source is not None:
+            assert value in self.source.columns, f'Could not find a column named "{value}" in data.'
         self._coloringColumn = value
 
     @property
@@ -140,16 +154,15 @@ class PCA(InteractivePlot):
 
     def Widgets(self):
         return {
-            **super(PCA, self).Widgets(),
             'subplots': widgets.Text(value=json.dumps(self.subplots), placeholder='JSON Array (or an array of arrays)'),
-            'coloringColumn': widgets.Dropdown(options=self.data.columns, value=self.coloringColumn) if self.data is not None else widgets.Text(value=self.coloringColumn),
+            'coloringColumn': widgets.Dropdown(options=self.source.columns, value=self.coloringColumn) if self.source is not None else widgets.Text(value=self.coloringColumn),
             'coloringStyle': widgets.Dropdown(options=['Categorical', 'Continuous'], value=self.coloringStyle),
             'coloringPalette': widgets.Dropdown(options=[*self.CategoricalPalettes, *self.ContinuousPalettes], value=self.coloringPalette),
             'numCols': widgets.IntSlider(value=3, min=1, max=8),
         }
     
     def Generate(self):
-        grid = gridplot([[self._Draw(x, y) for x, y in gridRow] for gridRow in self.subplots])
+        grid = gridplot([[self._Draw(x, y) for x, y in gridRow] for gridRow in self._SubplotsOrganized()])
         if self._colorBar is not None:
             self._safeWarnings.add(MISSING_RENDERERS)  # We are doing an empty dummy plot for the color-bar.
             dummy = figure(height=200, width=100, toolbar_location=None, min_border=0, outline_line_color=None)
@@ -190,6 +203,7 @@ class PCA(InteractivePlot):
                 except StopIteration:
                     raise RuntimeError('The chosen color palette does not have enough distinct colors for the selected column.')
                 else:
+                    palette = palette[:targetColumn.nunique()]
                     if pd.api.types.is_numeric_dtype(targetColumn.dtype):
                         targetColumn = targetColumn.astype('str')
                         data['__category__'] = targetColumn
@@ -203,6 +217,7 @@ class PCA(InteractivePlot):
         else:
             color = 'blue'
         source = ColumnDataSource(data)
-        subplot.circle(source=source, x=x, y=y, color=color, alpha='__alpha__', size=5)
-        subplot.add_tools(HoverTool(tooltips=[(key, f'@{{{value}}}') for key, value in self._hovers.items()]))
+        subplot.circle(source=source, x=x, y=y, color=color, alpha='__alpha__', size=self.pointSize, line_color=None)
+        if self._hovers:
+            subplot.add_tools(HoverTool(tooltips=[(key, f'@{{{value}}}') for key, value in self._hovers.items()]))
         return subplot
