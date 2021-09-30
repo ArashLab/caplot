@@ -4,12 +4,14 @@ import os.path
 import pickle
 import re
 import urllib.parse
+from collections.abc import Iterable
 
 import ipywidgets as widgets
 import numpy as np
 import pandas as pd
 from IPython.display import display
 from bokeh.models.plots import Plot
+from bokeh.models.layouts import Row, Column
 from bokeh.core.validation import silence
 from bokeh.io.export import get_screenshot_as_png, export_svg
 from bokeh.plotting import output_file, show
@@ -22,7 +24,7 @@ class InteractivePlot(abc.ABC):
     SupportedExtensions = ('.png', '.jpeg', '.svg', '.pdf', '.html', '.caplot')
 
     def __init__(self, source=None, loadQuery=None, filter=None, invertFilter=None, filterTemplate=None, highlight=None,
-                 invertHighlight=None, highlightTemplate=None, minorAlpha=None, hovers=None):
+                 invertHighlight=None, highlightTemplate=None, minorAlpha=None, greyHighlight=False, hovers=None):
         """
         `InteractivePlot` serves as the base class for all charts in CAPlot. The class handles all functionalities
         related to I/O, while also providing an interface for filtering through data and highlighting certain points,
@@ -49,6 +51,8 @@ class InteractivePlot(abc.ABC):
             An optional template query based on which custom widgets will be shown.
         minorAlpha: float
             Specifies the opacity of points that have not been highlighted while some others are.
+        greyHighlight: bool
+            Whether the non-highlighted data points must be colored grey.
         hovers: dict
             A mapping of arbitrary labels to certain columns in the data source.
         """
@@ -62,6 +66,7 @@ class InteractivePlot(abc.ABC):
         self._highlightTemplate = None
         self._highlighted = None
         self._minorAlpha = 0.5
+        self.greyHighlight = greyHighlight
         self._hovers = dict()
         self._safeWarnings = set()
         # Initializations
@@ -236,7 +241,7 @@ class InteractivePlot(abc.ABC):
         pd.DataFrame: Filtered data, with an extra column, `__alpha__`, which is used to highlight certain records.
         """
         df = (self._data.loc[self._filtered] if self._filtered is not None else self._data).copy()
-        df['__alpha__'] = np.where(df.index.isin(self._highlighted), 1, self.minorAlpha) if (self._highlighted is not None)  else 1
+        df['__highlighted__'] = df.index.isin(self._highlighted) if self._highlighted is not None else True
         return df
 
     @property
@@ -256,7 +261,7 @@ class InteractivePlot(abc.ABC):
 
     def _WidgetsFor(self, queryTemplate):
         mapping = dict()
-        for variableDescriptor in re.findall(r'\{.*\}', queryTemplate):
+        for variableDescriptor in re.findall(r'\{[^\{\}]*\}', queryTemplate):
             label, widget, *args = re.split(': ?', variableDescriptor[1:-1])
             if widget == 'intSlider':
                 minimum, maximum, step, default = args
@@ -311,11 +316,18 @@ class InteractivePlot(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def Generate(self):
+    def Generate(self, outputBackend='canvas', hideBokehLogo=False):
         """
         The method generates a Bokeh plot and returns it.
 
         This method is meant to be heart of subclasses, containing their primary functionalities.
+
+        Parameters
+        ----------
+        outputBackend: str
+            Specifies the target output backend for Bokeh.
+        hideBokehLogo: bool
+            When set, Bokeh's logo will be removed from the toolbar.
 
         Returns
         -------
@@ -336,16 +348,33 @@ class InteractivePlot(abc.ABC):
         for error_code in self._safeWarnings:
             silence(error_code, False)
 
-    def _SaveAs(self, plot, prefix, extension):
+    def _SaveAs(self, prefix, extension):
+        """
+        The method is a utility function for exporting the plot to a file with a certain file extension format.
+
+        The method uses Bokeh's builtin functions for static outputs, and Pickle, for `.caplot` which encapsulates the
+        data as well.
+
+        Parameters
+        ----------
+        plot: list or Plot
+            Bokeh-generated plot or grid-plot.
+        prefix: str
+            Full path to the desired output file, minus its extension.
+        extension: str
+            The file extension format.
+        """
         filepath = prefix + extension
         if extension == '.caplot':
             with open(filepath, 'wb') as stream:
                 pickle.dump(self, stream)
         elif extension in ('.png', '.jpeg'):
+            plot = self.Generate(hideBokehLogo=True)
             im = get_screenshot_as_png(plot)
             im = im.convert('RGB')
             im.save(filepath)
         elif extension in ('.svg', '.pdf'):
+            plot = self.Generate(hideBokehLogo=True, outputBackend='svg')
             export_svg(plot, filename=filepath)
             if extension == '.pdf':
                 try:
@@ -375,11 +404,10 @@ class InteractivePlot(abc.ABC):
         AssertionError
             If the target file extension format is not supported.
         """
-        plot = self.Generate()
         prefix, extension = os.path.splitext(filepath)
         assert extension in self.SupportedExtensions, 'Unsupported file extension format.'
         for extension in ([extension] if extension else self.SupportedExtensions):
-            self._SaveAs(plot, prefix, extension)
+            self._SaveAs(prefix, extension)
 
     @staticmethod
     def _GenerateGrid(mapping, keepCasing=False):

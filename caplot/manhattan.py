@@ -1,6 +1,6 @@
 import importlib.resources as resources
 from pprint import pformat
-
+from munch import munchify
 import ipywidgets as widgets
 import numpy as np
 import pandas as pd
@@ -16,18 +16,19 @@ from stringcase import titlecase
 from .interactiveplot import InteractivePlot
 
 with resources.open_binary('caplot', 'refgen.yaml') as stream:
-    refGenome = yaml.full_load(stream)
+    refGenome = munchify(yaml.full_load(stream))
 
 
 class Manhattan(InteractivePlot):
     Palettes = 'Category10', 'Category20', 'Category20b', 'Category20c', 'Accent', 'GnBu', 'PRGn', 'Paired'
     VEPURL = 'https://rest.ensembl.org/vep/human/id'
     VEPLimit = 200
+    GAP_RATIO = 0.01
 
     def __init__(self, source=None, loadQuery=None, filter=None, invertFilter=None, filterTemplate=None, highlight=None,
-                 invertHighlight=None, highlightTemplate=None, minorAlpha=None, hovers=None, genome='GRCh37',
-                 contig=None, position=None, pvalue=None, mlog10=False, top=None, width=600, height=400,
-                 coloringPalette='Category10', numColors=2, pointSize=5, yRange=(3, 20)):
+                 invertHighlight=None, highlightTemplate=None, minorAlpha=None, greyHighlight=None, hovers=None,
+                 genome='GRCh37', contig=None, position=None, pvalue=None, mlog10=False, top=None, width=800,
+                 height=600, coloringPalette='Category10', numColors=2, pointSize=5, yRange=None):
         """
         As the name suggests, `Manhattan` plots a manhattan chart for the specified `pvalue` column.
 
@@ -52,6 +53,8 @@ class Manhattan(InteractivePlot):
             An optional template query based on which custom widgets will be shown.
         minorAlpha: float
             Specifies the opacity of points that have not been highlighted while some others are.
+        greyHighlight: bool
+            Whether the non-highlighted data points must be colored grey.
         hovers: dict
             A mapping of arbitrary labels to certain columns in the data source.
         genome: str
@@ -78,8 +81,8 @@ class Manhattan(InteractivePlot):
         pointSize: int or float
             Passed directly to Bokeh to specify the size of all points.
         """
-        super(Manhattan, self).__init__(source, loadQuery, filter, invertFilter, filterTemplate, highlight, invertHighlight,
-                                        highlightTemplate, minorAlpha, hovers)
+        super(Manhattan, self).__init__(source, loadQuery, filter, invertFilter, filterTemplate, highlight,
+                                        invertHighlight, highlightTemplate, minorAlpha, greyHighlight, hovers)
         self._genome = None
         self._contig = None
         self._position = None
@@ -187,7 +190,7 @@ class Manhattan(InteractivePlot):
         self._rsidColumn = value
         # Get the filtered and highlighted data
         data = self._ProcessedData()
-        data = data[data['__alpha__'] == 1]
+        # data = data[data['__alpha__'] == 1]
         # Take the top `VEPLimit` most significant variants
         data = data.sort_values(by=self.pvalue)
         data = data.tail(self.VEPLimit) if self.mlog10 else data.head(self.VEPLimit)
@@ -231,29 +234,18 @@ class Manhattan(InteractivePlot):
             'numColors': widgets.IntSlider(value=2, min=1, max=22, step=1),
         }
 
-    def Generate(self):
-        plot = figure(width=self.width, height=self.height, y_range=self.yRange,
-                      x_axis_label='Chromosome', y_axis_label='-log10(p-value)')
-
-        # Apply filter and highligh query
+    def Generate(self, outputBackend='canvas', hideBokehLogo=True):
         data = self._ProcessedData()
-
-        # Take the top most significat variant
         if self.top is not None:
             data = data.sort_values(by=self.pvalue)
             data = data.tail(self.top) if self.mlog10 else data.head(self.top)
-
-        # Caclulate minus log10 of the pvalue (if needed)
         if self.mlog10:
             yColumnName = self.pvalue
         else:
             data['__pvalue__'] = -np.log10(data[self.pvalue])
             yColumnName = '__pvalue__'
-        
-        # Calculate global position (X coordinate) of the variants
         data[self.contig] = data[self.contig].astype(str)
         data['__location__'] = data[self.contig].replace(self.refGenome['cumulativeLengths']) + data[self.position]
-
         try:
             palette = getattr(palettes, self.coloringPalette)
             palette = next(value for key, value in palette.items() if key > self.numColors)
@@ -269,8 +261,21 @@ class Manhattan(InteractivePlot):
         if self.rsidColumn:
             data = data.merge(right=self._annotationData, left_on=self.rsidColumn, right_on='__anon__id__', how='left')
             tooltips.extend((titlecase(columnName[8:-2]), f'@{{{columnName}}}') for columnName in self._annotationData.columns)
-        source = ColumnDataSource(data)
-        plot.circle(source=source, x='__location__', y=yColumnName, size=self.pointSize, color=color, alpha='__alpha__', line_color=None)
+        # Calculate xRange to add gaps on either side
+        lastContig = self.refGenome.contigOrder[-1]
+        xLen = self.refGenome.cumulativeLengths[lastContig] + self.refGenome.lengths[lastContig]
+        xGap = int(xLen * self.GAP_RATIO)
+        xRange = (0-xGap, xLen+xGap)
+        defaultYRange = (0, 1.05 * data[yColumnName].max())
+        plot = figure(width=self.width, height=self.height, x_range=xRange, y_range=self.yRange or defaultYRange,
+                      x_axis_label='Chromosome', y_axis_label='-log10(p-value)')
+        plot.output_backend = outputBackend
+        plot.toolbar.logo = None
+        for highlighted in (False, True):
+            source = ColumnDataSource(data[data['__highlighted__'] == highlighted])
+            plot.circle(source=source, x='__location__', y=yColumnName, size=self.pointSize, line_color=None,
+                        color='grey' if self.greyHighlight and not highlighted else color,
+                        alpha=1 if highlighted else self.minorAlpha)
         if tooltips:
             plot.add_tools(HoverTool(tooltips=tooltips))
         plot.xaxis.ticker = [value for key, value in self.refGenome['tickPosition'].items()]

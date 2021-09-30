@@ -21,9 +21,9 @@ class PCA(InteractivePlot):
     ContinuousPalettes = 'Greys256', 'Inferno256', 'Magma256', 'Plasma256', 'Viridis256', 'Cividis256', 'Turbo256'
 
     def __init__(self, source=None, loadQuery=None, filter=None, invertFilter=None, filterTemplate=None, highlight=None,
-                 invertHighlight=None, highlightTemplate=None, minorAlpha=None, hovers=None, subplots=None,
-                 coloringColumn=None, coloringStyle='Categorical', coloringPalette='Category10', numCols=2,
-                 subplotWidth=400, subplotHeight=400, pointSize=5):
+                 invertHighlight=None, highlightTemplate=None, minorAlpha=None, greyHighlight=None, hovers=None,
+                 subplots=None, coloringColumn=None, coloringStyle='Categorical', coloringPalette='Category10',
+                 numCols=2, subplotWidth=400, subplotHeight=400, pointSize=5):
         """
         The `PCA` class is intended to display multiple scatter subplots, pitting certain columns against one another.
 
@@ -48,6 +48,8 @@ class PCA(InteractivePlot):
             An optional template query based on which custom widgets will be shown.
         minorAlpha: float
             Specifies the opacity of points that have not been highlighted while some others are.
+        greyHighlight: bool
+            Whether the non-highlighted data points must be colored grey.
         hovers: dict
             A mapping of arbitrary labels to certain columns in the data source.
         subplots: list of str or list of list of str
@@ -69,8 +71,8 @@ class PCA(InteractivePlot):
         pointSize: int or float
             Passed directly to Bokeh to specify the size of all points.
         """
-        super(PCA, self).__init__(source, loadQuery, filter, invertFilter, filterTemplate, highlight, invertHighlight,
-                                  highlightTemplate, minorAlpha, hovers)
+        super(PCA, self).__init__(source, loadQuery, filter, invertFilter, filterTemplate, highlight,
+                                  invertHighlight, highlightTemplate, minorAlpha, greyHighlight, hovers)
         self._subplots = None
         self._coloringColumn = None
         self._coloringPalette = None
@@ -161,8 +163,9 @@ class PCA(InteractivePlot):
             'numCols': widgets.IntSlider(value=3, min=1, max=8),
         }
     
-    def Generate(self):
-        grid = gridplot([[self._Draw(x, y) for x, y in gridRow] for gridRow in self._SubplotsOrganized()])
+    def Generate(self, outputBackend='canvas', hideBokehLogo=True):
+        extraKwargs = {'toolbar_options': {'logo': None}} if hideBokehLogo else {}
+        grid = gridplot([[self._Draw(x, y, outputBackend) for x, y in gridRow] for gridRow in self._SubplotsOrganized()], **extraKwargs)
         if self._colorBar is not None:
             self._safeWarnings.add(MISSING_RENDERERS)  # We are doing an empty dummy plot for the color-bar.
             dummy = figure(height=200, width=100, toolbar_location=None, min_border=0, outline_line_color=None)
@@ -172,16 +175,18 @@ class PCA(InteractivePlot):
             self._safeWarnings.discard(MISSING_RENDERERS)
         return grid
 
-    def _Draw(self, x, y):
+    def _Draw(self, xColumnName, yColumnName, outputBackend):
         """
         The method draws a single PCA plot, pitting `x` against `y`.
 
         Parameters
         ----------
-        x: str
+        xColumnName: str
             Name of a column shown on the horizontal axis.
-        y: str
+        yColumnName: str
             Name of a column shown on the vertical axis.
+        outputBackend: str
+            Specifies the target output backend for Bokeh.
 
         Returns
         -------
@@ -189,7 +194,8 @@ class PCA(InteractivePlot):
             Drawn subplot.
         """
         self._colorBar = None  # In case of a major change in settings, we don't want the old color-bar hanging around!
-        subplot = figure(width=self.subplotWidth, height=self.subplotHeight, x_axis_label=x, y_axis_label=y)
+        subplot = figure(width=self.subplotWidth, height=self.subplotHeight, x_axis_label=xColumnName, y_axis_label=yColumnName)
+        subplot.output_backend = outputBackend
         data = self._ProcessedData()
         if self.coloringColumn:
             coloringColumn = self.coloringColumn
@@ -216,8 +222,11 @@ class PCA(InteractivePlot):
             self._colorBar = ColorBar(color_mapper=mapper, label_standoff=12)  # Common between all subplots.
         else:
             color = 'blue'
-        source = ColumnDataSource(data)
-        subplot.circle(source=source, x=x, y=y, color=color, alpha='__alpha__', size=self.pointSize, line_color=None)
+        for highlighted in (False, True):
+            source = ColumnDataSource(data[data['__highlighted__'] == highlighted])
+            subplot.circle(source=source, x=xColumnName, y=yColumnName, size=self.pointSize, line_color=None,
+                           color='grey' if self.greyHighlight and not highlighted else color,
+                           alpha=1 if highlighted else self.minorAlpha)
         if self._hovers:
             subplot.add_tools(HoverTool(tooltips=[(key, f'@{{{value}}}') for key, value in self._hovers.items()]))
         return subplot
