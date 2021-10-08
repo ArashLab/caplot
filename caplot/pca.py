@@ -17,6 +17,54 @@ from .interactiveplot import InteractivePlot
 
 
 class PCA(InteractivePlot):
+    """
+    The `PCA` class is intended to display multiple scatter subplots, pitting certain columns against one another.
+
+    Parameters
+    ----------
+    source: str or pd.DataFrame
+        Path to a file Pandas can read from, the URL for a SQL database, or a literal DataFrame.
+    loadQuery: str
+        A SQL query ran on the data on initialization. This argument is required when connecting to a SQL database,
+        but optional for other supported inputs. This would limit the data that is kept in memory.
+    filter: str
+        An optional SQL query to specify which records must be kept in.
+    invertFilter: str
+        An optional SQL query to specify which records must be left out.
+    filterTemplate: str
+        An optional template query based on which custom widgets will be shown.
+    highlight: str
+        An optional SQL query to specify which records must be highlighted.
+    invertHighlight: str
+        An optional SQL query to specify which records must not be highlighted, while the rest are.
+    highlightTemplate: str
+        An optional template query based on which custom widgets will be shown.
+    minorAlpha: float
+        Specifies the opacity of points that have not been highlighted while some others are. Defaults to 0.5.
+    greyHighlight: bool
+        Whether the non-highlighted data points must be colored grey.
+    hovers: dict
+        A mapping of arbitrary labels to certain columns in the data source.
+    subplots: list of str or list of list of str
+        The subplots that must be drawn. When this argument is a list of strings, all combinations of the elements
+        of the list will be drawn. However, the argument can also be passed a list of pairs of column names,
+        explicitly naming the columns that must be pit together.
+    coloringColumn: str
+        The name of a column present in the data.
+    coloringStyle: str
+        Either `"Categorical"` or `"Continuous"`. Defaults to `"Categorical"`.
+    coloringPalette: str
+        Name of a palette, supported by Bokeh and suitable for the chosen `coloringStyle`. Defaults to `"Category10"`.
+    numCols: int
+        Number of subplots in each row. Default is 2.
+    subplotWidth: int
+        Width of each subplot. Default is 400 pixels.
+    subplotHeight: int
+        Height of each subplot. Default is 400 pixels.
+    pointSize: int or float
+        Passed directly to Bokeh to specify the size of all points. Default is 5.
+    """
+
     CategoricalPalettes = 'Category10', 'Category20', 'Category20b', 'Category20c', 'Accent', 'GnBu', 'PRGn', 'Paired'
     ContinuousPalettes = 'Greys256', 'Inferno256', 'Magma256', 'Plasma256', 'Viridis256', 'Cividis256', 'Turbo256'
 
@@ -24,53 +72,6 @@ class PCA(InteractivePlot):
                  invertHighlight=None, highlightTemplate=None, minorAlpha=None, greyHighlight=None, hovers=None,
                  subplots=None, coloringColumn=None, coloringStyle='Categorical', coloringPalette='Category10',
                  numCols=2, subplotWidth=400, subplotHeight=400, pointSize=5):
-        """
-        The `PCA` class is intended to display multiple scatter subplots, pitting certain columns against one another.
-
-        Parameters
-        ----------
-        source: str or pd.DataFrame
-            Path to a file Pandas can read from, the URL for a SQL database, or a literal DataFrame.
-        loadQuery: str
-            A SQL query ran on the data on initialization. This argument is required when connecting to a SQL database,
-            but optional for other supported inputs. This would limit the data that is kept in memory.
-        filter: str
-            An optional SQL query to specify which records must be kept in.
-        invertFilter: str
-            An optional SQL query to specify which records must be left out.
-        filterTemplate: str
-            An optional template query based on which custom widgets will be shown.
-        highlight: str
-            An optional SQL query to specify which records must be highlighted.
-        invertHighlight: str
-            An optional SQL query to specify which records must not be highlighted, while the rest are.
-        highlightTemplate: str
-            An optional template query based on which custom widgets will be shown.
-        minorAlpha: float
-            Specifies the opacity of points that have not been highlighted while some others are.
-        greyHighlight: bool
-            Whether the non-highlighted data points must be colored grey.
-        hovers: dict
-            A mapping of arbitrary labels to certain columns in the data source.
-        subplots: list of str or list of list of str
-            The subplots that must be drawn. When this argument is a list of strings, all combinations of the elements
-            of the list will be drawn. However, the argument can also be passed a list of pairs of column names,
-            explicitly naming the columns that must be pit together.
-        coloringColumn: str
-            The name of a column present in the data.
-        coloringStyle: str
-            Either `"Categorical"` or `"Continuous"`.
-        coloringPalette: str
-            Name of a palette, supported by Bokeh and suitable for the chosen `coloringStyle`.
-        numCols: int
-            Number of subplots in each row.
-        subplotWidth: int
-            Width of each subplot.
-        subplotHeight: int
-            Height of each subplot.
-        pointSize: int or float
-            Passed directly to Bokeh to specify the size of all points.
-        """
         super(PCA, self).__init__(source, loadQuery, filter, invertFilter, filterTemplate, highlight,
                                   invertHighlight, highlightTemplate, minorAlpha, greyHighlight, hovers)
         self._subplots = None
@@ -170,6 +171,7 @@ class PCA(InteractivePlot):
             self._safeWarnings.add(MISSING_RENDERERS)  # We are doing an empty dummy plot for the color-bar.
             dummy = figure(height=200, width=100, toolbar_location=None, min_border=0, outline_line_color=None)
             dummy.add_layout(self._colorBar, place='left')
+            dummy.output_backend = outputBackend
             grid = row(children=[grid, dummy])
         else:
             self._safeWarnings.discard(MISSING_RENDERERS)

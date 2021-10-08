@@ -5,6 +5,7 @@ import pickle
 import re
 import urllib.parse
 from collections.abc import Iterable
+from warnings import warn
 
 import ipywidgets as widgets
 import numpy as np
@@ -13,6 +14,7 @@ from IPython.display import display
 from bokeh.models.plots import Plot
 from bokeh.models.layouts import Row, Column
 from bokeh.core.validation import silence
+from bokeh.io import reset_output
 from bokeh.io.export import get_screenshot_as_png, export_svg
 from bokeh.plotting import output_file, show
 from pandasql import sqldf
@@ -21,41 +23,42 @@ from stringcase import titlecase
 
 
 class InteractivePlot(abc.ABC):
+    """
+    `InteractivePlot` serves as the base class for all charts in CAPlot. The class handles all functionalities
+    related to I/O, while also providing an interface for filtering through data and highlighting certain points,
+    which is common to all types of charts.
+
+    Parameters
+    ----------
+    source: str or pd.DataFrame
+        Path to a file Pandas can read from, the URL for a SQL database, or a literal DataFrame.
+    loadQuery: str
+        A SQL query ran on the data on initialization. This argument is required when connecting to a SQL database,
+        but optional for other supported inputs. This would limit the data that is kept in memory.
+    filter: str
+        An optional SQL query to specify which records must be kept in.
+    invertFilter: str
+        An optional SQL query to specify which records must be left out.
+    filterTemplate: str
+        An optional template query based on which custom widgets will be shown.
+    highlight: str
+        An optional SQL query to specify which records must be highlighted.
+    invertHighlight: str
+        An optional SQL query to specify which records must not be highlighted, while the rest are.
+    highlightTemplate: str
+        An optional template query based on which custom widgets will be shown.
+    minorAlpha: float
+        Specifies the opacity of points that have not been highlighted while some others are. Defaults to 0.5.
+    greyHighlight: bool
+        Whether the non-highlighted data points must be colored grey.
+    hovers: dict
+        A mapping of arbitrary labels to certain columns in the data source.
+    """
+
     SupportedExtensions = ('.png', '.jpeg', '.svg', '.pdf', '.html', '.caplot')
 
     def __init__(self, source=None, loadQuery=None, filter=None, invertFilter=None, filterTemplate=None, highlight=None,
                  invertHighlight=None, highlightTemplate=None, minorAlpha=None, greyHighlight=False, hovers=None):
-        """
-        `InteractivePlot` serves as the base class for all charts in CAPlot. The class handles all functionalities
-        related to I/O, while also providing an interface for filtering through data and highlighting certain points,
-        which is common to all types of charts.
-
-        Parameters
-        ----------
-        source: str or pd.DataFrame
-            Path to a file Pandas can read from, the URL for a SQL database, or a literal DataFrame.
-        loadQuery: str
-            A SQL query ran on the data on initialization. This argument is required when connecting to a SQL database,
-            but optional for other supported inputs. This would limit the data that is kept in memory.
-        filter: str
-            An optional SQL query to specify which records must be kept in.
-        invertFilter: str
-            An optional SQL query to specify which records must be left out.
-        filterTemplate: str
-            An optional template query based on which custom widgets will be shown.
-        highlight: str
-            An optional SQL query to specify which records must be highlighted.
-        invertHighlight: str
-            An optional SQL query to specify which records must not be highlighted, while the rest are.
-        highlightTemplate: str
-            An optional template query based on which custom widgets will be shown.
-        minorAlpha: float
-            Specifies the opacity of points that have not been highlighted while some others are.
-        greyHighlight: bool
-            Whether the non-highlighted data points must be colored grey.
-        hovers: dict
-            A mapping of arbitrary labels to certain columns in the data source.
-        """
         self._data = None
         self._filter = None
         self._invertFilter = None
@@ -325,9 +328,9 @@ class InteractivePlot(abc.ABC):
         Parameters
         ----------
         outputBackend: str
-            Specifies the target output backend for Bokeh.
+            Specifies the target output backend for Bokeh. Defaults to `canvas`.
         hideBokehLogo: bool
-            When set, Bokeh's logo will be removed from the toolbar.
+            When set, Bokeh's logo will be removed from the toolbar. Default is `False`.
 
         Returns
         -------
@@ -387,6 +390,8 @@ class InteractivePlot(abc.ABC):
                     renderPDF.drawToFile(drawing, filepath)
         elif extension == '.html':
             output_file(filename=filepath, title='Plot Generated by CAPlot')
+            reset_output()
+            warn('To avoid further issues, output states have been reset. Please invoke output_notebook() again if you are working in a notebook.')
 
     def SaveAs(self, filepath):
         """

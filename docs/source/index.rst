@@ -1,0 +1,26 @@
+.. caplot documentation master file, created by
+   sphinx-quickstart on Thu Oct  7 23:10:12 2021.
+   You can adapt this file completely to your liking, but it should at least
+   contain the root `toctree` directive.
+
+Welcome to CAPlot's documentation!
+==================================
+
+   This is the index of the docs. Feel free to add some info here if you'd like.
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Contents:
+
+   introduction
+   how_it_works
+   tutorial
+   modules
+   experimental_features
+
+Indices and tables
+==================
+
+* :ref:`genindex`
+* :ref:`modindex`
+* :ref:`search`

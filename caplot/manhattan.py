@@ -20,6 +20,61 @@ with resources.open_binary('caplot', 'refgen.yaml') as stream:
 
 
 class Manhattan(InteractivePlot):
+    """
+    As the name suggests, `Manhattan` plots a manhattan chart for the specified `pvalue` column.
+
+    Parameters
+    ----------
+    source: str or pd.DataFrame
+        Path to a file Pandas can read from, the URL for a SQL database, or a literal DataFrame.
+    loadQuery: str
+        A SQL query ran on the data on initialization. This argument is required when connecting to a SQL database,
+        but optional for other supported inputs. This would limit the data that is kept in memory.
+    filter: str
+        An optional SQL query to specify which records must be kept in.
+    invertFilter: str
+        An optional SQL query to specify which records must be left out.
+    filterTemplate: str
+        An optional template query based on which custom widgets will be shown.
+    highlight: str
+        An optional SQL query to specify which records must be highlighted.
+    invertHighlight: str
+        An optional SQL query to specify which records must not be highlighted, while the rest are.
+    highlightTemplate: str
+        An optional template query based on which custom widgets will be shown.
+    minorAlpha: float
+        Specifies the opacity of points that have not been highlighted while some others are. Defaults to 0.5.
+    greyHighlight: bool
+        Whether the non-highlighted data points must be colored grey.
+    hovers: dict
+        A mapping of arbitrary labels to certain columns in the data source.
+    genome: str
+        The name of a genome reference set. Current supported values are `"GRCh37"` and `"GRCh38"`. Defaults to `"GRCh37"`.
+    contig: str
+        Name of a column present in the data.
+    position:
+        Name of a column present in the data.
+    pvalue:
+        Name of a column present in the data.
+    mlog10: bool
+        If the `pvalue` column is already transformed by -log10. Default is `False`.
+    top: int
+        Number of points on the scatter plot. Lower this value if you're having trouble viewing the plot. When
+        choosing a subset, records with the largest `pvalue` (after transformation) are kept.
+    width: int
+        Width of the plot. Default is 800 pixels.
+    height: int
+        Height of the plot. Default is 600 pixels.
+    coloringPalette: str
+        Name of a color palette supported by Bokeh. Defaults to `"Category10"`.
+    numColors: int
+        Number of distinct colors used for coloring consecutive columns. Default is 2.
+    pointSize: int or float
+        Passed directly to Bokeh to specify the size of all points. Default is 5.
+    yRange: tuple
+        Specifies the range of the vertical axis. Defaults to 0 and 1.05 x the maximum value.
+    """
+
     Palettes = 'Category10', 'Category20', 'Category20b', 'Category20c', 'Accent', 'GnBu', 'PRGn', 'Paired'
     VEPURL = 'https://rest.ensembl.org/vep/human/id'
     VEPLimit = 200
@@ -29,58 +84,6 @@ class Manhattan(InteractivePlot):
                  invertHighlight=None, highlightTemplate=None, minorAlpha=None, greyHighlight=None, hovers=None,
                  genome='GRCh37', contig=None, position=None, pvalue=None, mlog10=False, top=None, width=800,
                  height=600, coloringPalette='Category10', numColors=2, pointSize=5, yRange=None):
-        """
-        As the name suggests, `Manhattan` plots a manhattan chart for the specified `pvalue` column.
-
-        Parameters
-        ----------
-        source: str or pd.DataFrame
-            Path to a file Pandas can read from, the URL for a SQL database, or a literal DataFrame.
-        loadQuery: str
-            A SQL query ran on the data on initialization. This argument is required when connecting to a SQL database,
-            but optional for other supported inputs. This would limit the data that is kept in memory.
-        filter: str
-            An optional SQL query to specify which records must be kept in.
-        invertFilter: str
-            An optional SQL query to specify which records must be left out.
-        filterTemplate: str
-            An optional template query based on which custom widgets will be shown.
-        highlight: str
-            An optional SQL query to specify which records must be highlighted.
-        invertHighlight: str
-            An optional SQL query to specify which records must not be highlighted, while the rest are.
-        highlightTemplate: str
-            An optional template query based on which custom widgets will be shown.
-        minorAlpha: float
-            Specifies the opacity of points that have not been highlighted while some others are.
-        greyHighlight: bool
-            Whether the non-highlighted data points must be colored grey.
-        hovers: dict
-            A mapping of arbitrary labels to certain columns in the data source.
-        genome: str
-            The name of a genome reference set. Current supported values are `"GRCh37"` and `"GRCh38"`.
-        contig: str
-            Name of a column present in the data.
-        position:
-            Name of a column present in the data.
-        pvalue:
-            Name of a column present in the data.
-        mlog10: bool
-            If the `pvalue` column is already transformed by -log10. (default: False)
-        top: int
-            Number of points on the scatter plot. Lower this value if you're having trouble viewing the plot. When
-            choosing a subset, records with the largest `pvalue` (after transformation) are kept.
-        width: int
-            Width of the plot.
-        height: int
-            Height of the plot.
-        coloringPalette: str
-            Name of a color palette supported by Bokeh.
-        numColors: int
-            Number of distinct colors used for coloring consecutive columns.
-        pointSize: int or float
-            Passed directly to Bokeh to specify the size of all points.
-        """
         super(Manhattan, self).__init__(source, loadQuery, filter, invertFilter, filterTemplate, highlight,
                                         invertHighlight, highlightTemplate, minorAlpha, greyHighlight, hovers)
         self._genome = None
