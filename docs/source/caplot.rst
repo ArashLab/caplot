@@ -1,27 +1,15 @@
-caplot package
-==============
-
-Submodules
-----------
-
-caplot.interactiveplot module
------------------------------
+`caplot` Package
+================
 
 .. automodule:: caplot.interactiveplot
    :members:
    :undoc-members:
    :show-inheritance:
 
-caplot.manhattan module
------------------------
-
 .. automodule:: caplot.manhattan
    :members:
    :undoc-members:
    :show-inheritance:
-
-caplot.pca module
------------------
 
 .. automodule:: caplot.pca
    :members:
