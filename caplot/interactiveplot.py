@@ -4,18 +4,16 @@ import os.path
 import pickle
 import re
 import urllib.parse
-from collections.abc import Iterable
+from contextlib import contextmanager
 from warnings import warn
 
 import ipywidgets as widgets
-import numpy as np
 import pandas as pd
 from IPython.display import display
-from bokeh.models.plots import Plot
-from bokeh.models.layouts import Row, Column
 from bokeh.core.validation import silence
 from bokeh.io import reset_output
 from bokeh.io.export import get_screenshot_as_png, export_svg
+from bokeh.models.plots import Plot
 from bokeh.plotting import output_file, show, save
 from pandasql import sqldf
 from sqlalchemy import create_engine
@@ -339,17 +337,27 @@ class InteractivePlot(abc.ABC):
         """
         pass
 
+    @contextmanager
+    def _SafeWarningsSilenced(self):
+        """
+        Context manager that silences all Bokeh warnings that are deemed to be safe.
+        """
+        for error_code in self._safeWarnings:
+            silence(error_code, True)
+        try:
+            yield self
+        finally:
+            for error_code in self._safeWarnings:
+                silence(error_code, False)
+
     def Show(self):
         """
         The method displays the chart, with the latest changes. Some charts might cause predetermined warnings which are
         safe to ignore. The method will silence these warnings temporarily.
         """
         plot = self.Generate()
-        for error_code in self._safeWarnings:
-            silence(error_code, True)
-        show(plot)
-        for error_code in self._safeWarnings:
-            silence(error_code, False)
+        with self._SafeWarningsSilenced():
+            show(plot)
 
     def _SaveAs(self, prefix, extension):
         """
@@ -415,7 +423,8 @@ class InteractivePlot(abc.ABC):
         prefix, extension = os.path.splitext(filepath)
         assert extension in self.SupportedExtensions, 'Unsupported file extension format.'
         for extension in ([extension] if extension else self.SupportedExtensions):
-            self._SaveAs(prefix, extension)
+            with self._SafeWarningsSilenced():
+                self._SaveAs(prefix, extension)
 
     @staticmethod
     def _GenerateGrid(mapping, keepCasing=False):

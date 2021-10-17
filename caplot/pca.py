@@ -10,7 +10,7 @@ from bokeh.models import (
     CategoricalColorMapper,
     ColumnDataSource,
     HoverTool,
-    LinearColorMapper, ColorBar, )
+    LinearColorMapper, ColorBar)
 from bokeh.plotting import figure
 
 from .interactiveplot import InteractivePlot
@@ -78,7 +78,6 @@ class PCA(InteractivePlot):
         self._coloringColumn = None
         self._coloringPalette = None
         self._coloringStyle = None
-        self._colorBar = None
         self.numCols = numCols
         self.subplotWidth = subplotWidth
         self.subplotHeight = subplotHeight
@@ -165,28 +164,77 @@ class PCA(InteractivePlot):
         }
     
     def Generate(self, outputBackend='canvas', hideBokehLogo=True):
+        data = self._ProcessedData()
+        color, colorBar = self._ColorMapping(data)
         extraKwargs = {'toolbar_options': {'logo': None}} if hideBokehLogo else {}
-        grid = gridplot([[self._Draw(x, y, outputBackend) for x, y in gridRow] for gridRow in self._SubplotsOrganized()], **extraKwargs)
-        if self._colorBar is not None:
+        grid = gridplot([[self._Draw(data, x, y, color or 'blue', outputBackend) for x, y in gridRow]
+                         for gridRow in self._SubplotsOrganized()], **extraKwargs)
+        if colorBar is not None:
             self._safeWarnings.add(MISSING_RENDERERS)  # We are doing an empty dummy plot for the color-bar.
             dummy = figure(height=200, width=100, toolbar_location=None, min_border=0, outline_line_color=None)
-            dummy.add_layout(self._colorBar, place='left')
+            dummy.add_layout(colorBar, place='left')
             dummy.output_backend = outputBackend
             grid = row(children=[grid, dummy])
         else:
             self._safeWarnings.discard(MISSING_RENDERERS)
         return grid
 
-    def _Draw(self, xColumnName, yColumnName, outputBackend):
+    def _ColorMapping(self, data):
+        """
+        The method generates a mapper for the colors, as well as a color-bar which can be used externally.
+
+        Parameters
+        ----------
+        data: pd.DataFrame
+            Processed data to draw the plot from.
+
+        Returns
+        -------
+        color: str or dict
+            Passed directly to Bokeh when plotting.
+        colorBar: ColorBar
+            Must be drawn manually on a subplot.
+        """
+        if not self.coloringColumn:
+            return None, None
+        coloringColumn = self.coloringColumn
+        targetColumn = data[self.coloringColumn]
+        coloringStyle = self.coloringStyle or ('Categorical' if targetColumn.nunique() <= 10 else 'Continuous')
+        if coloringStyle == 'Categorical':
+            try:
+                assert self.coloringPalette in self.CategoricalPalettes, 'Selected palette is not suitable for categorical data.'
+                palette = getattr(palettes, self.coloringPalette)
+                palette = next(value for key, value in palette.items() if key > targetColumn.nunique())
+            except StopIteration:
+                raise RuntimeError('The chosen color palette does not have enough distinct colors for the selected column.')
+            else:
+                palette = palette[:targetColumn.nunique()]
+                if pd.api.types.is_numeric_dtype(targetColumn.dtype):
+                    targetColumn = targetColumn.astype('str')
+                    data['__category__'] = targetColumn
+                    coloringColumn = '__category__'
+                mapper = CategoricalColorMapper(palette=palette, factors=targetColumn.unique().tolist())
+        else:
+            assert self.coloringPalette in self.ContinuousPalettes, 'Selected palette is not suitable for continuous data.'
+            mapper = LinearColorMapper(palette=self.coloringPalette, low=targetColumn.min(), high=targetColumn.max())
+        color = {'field': coloringColumn, 'transform': mapper}
+        colorBar = ColorBar(color_mapper=mapper, label_standoff=12)  # Common between all subplots.
+        return color, colorBar
+
+    def _Draw(self, data, xColumnName, yColumnName, color, outputBackend):
         """
         The method draws a single PCA plot, pitting `x` against `y`.
 
         Parameters
         ----------
+        data: pd.DataFrame
+            Processed data to draw the plot from.
         xColumnName: str
             Name of a column shown on the horizontal axis.
         yColumnName: str
             Name of a column shown on the vertical axis.
+        color: str or dict
+            Passed directly to Bokeh when plotting.
         outputBackend: str
             Specifies the target output backend for Bokeh.
 
@@ -195,35 +243,8 @@ class PCA(InteractivePlot):
         bokeh.models.plots.Plot
             Drawn subplot.
         """
-        self._colorBar = None  # In case of a major change in settings, we don't want the old color-bar hanging around!
         subplot = figure(width=self.subplotWidth, height=self.subplotHeight, x_axis_label=xColumnName, y_axis_label=yColumnName)
         subplot.output_backend = outputBackend
-        data = self._ProcessedData()
-        if self.coloringColumn:
-            coloringColumn = self.coloringColumn
-            targetColumn = data[self.coloringColumn]
-            coloringStyle = self.coloringStyle or ('Categorical' if targetColumn.nunique() <= 10 else 'Continuous')
-            if coloringStyle == 'Categorical':
-                try:
-                    assert self.coloringPalette in self.CategoricalPalettes, 'Selected palette is not suitable for categorical data.'
-                    palette = getattr(palettes, self.coloringPalette)
-                    palette = next(value for key, value in palette.items() if key > targetColumn.nunique())
-                except StopIteration:
-                    raise RuntimeError('The chosen color palette does not have enough distinct colors for the selected column.')
-                else:
-                    palette = palette[:targetColumn.nunique()]
-                    if pd.api.types.is_numeric_dtype(targetColumn.dtype):
-                        targetColumn = targetColumn.astype('str')
-                        data['__category__'] = targetColumn
-                        coloringColumn = '__category__'
-                    mapper = CategoricalColorMapper(palette=palette, factors=targetColumn.unique().tolist())
-            else:
-                assert self.coloringPalette in self.ContinuousPalettes, 'Selected palette is not suitable for continuous data.'
-                mapper = LinearColorMapper(palette=self.coloringPalette, low=targetColumn.min(), high=targetColumn.max())
-            color = {'field': coloringColumn, 'transform': mapper}
-            self._colorBar = ColorBar(color_mapper=mapper, label_standoff=12)  # Common between all subplots.
-        else:
-            color = 'blue'
         for highlighted in (False, True):
             source = ColumnDataSource(data[data['__highlighted__'] == highlighted])
             subplot.circle(source=source, x=xColumnName, y=yColumnName, size=self.pointSize, line_color=None,

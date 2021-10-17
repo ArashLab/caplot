@@ -1,6 +1,6 @@
 import importlib.resources as resources
 from pprint import pformat
-from munch import munchify
+
 import ipywidgets as widgets
 import numpy as np
 import pandas as pd
@@ -11,6 +11,7 @@ from bokeh.models import (
     CategoricalColorMapper, ColumnDataSource, HoverTool,
 )
 from bokeh.plotting import figure
+from munch import munchify
 from stringcase import titlecase
 
 from .interactiveplot import InteractivePlot

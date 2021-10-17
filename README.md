@@ -21,3 +21,6 @@ To learn more about provided sample data see [SampleData.md](examples/data/Sampl
 ```bash
 pip install caplot
 ```
+
+In case you install caplot in the conda environemtn you may need to install requiered packages (and jupyter notebook) using conda.
+Othere wise the `SaveAs` function may not work.
